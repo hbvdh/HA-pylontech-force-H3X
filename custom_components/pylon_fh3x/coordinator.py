@@ -385,6 +385,49 @@ class PylontechCoordinator(DataUpdateCoordinator):
         except Exception as err:
             raise UpdateFailed(f"unexpected error: {err}")
 
+    async def _verify_write_locked(
+        self, address: int, expected: list[int], slave: int
+    ) -> bool:
+        """Verify written registers while holding the Modbus lock."""
+        try:
+            await self._pace_modbus(slave)
+
+            response = await _modbus_read(
+                self.client, address, len(expected), slave
+            )
+
+            if response is None or response.isError():
+                _LOGGER.error(
+                    "Modbus write verification read failed at %s "
+                    "(Slave %s): %s",
+                    address, slave, response,
+                )
+                return False
+
+            actual = getattr(response, "registers", None)
+
+            if (
+                not isinstance(actual, (list, tuple))
+                or list(actual) != expected
+            ):
+                _LOGGER.error(
+                    "Modbus write verification mismatch at %s "
+                    "(Slave %s): expected %s, received %s",
+                    address, slave, expected, actual,
+                )
+                return False
+
+            return True
+
+        except (OSError, TimeoutError, ModbusException) as err:
+            _LOGGER.error(
+                "Modbus write verification error at %s "
+                "(Slave %s): %s",
+                address, slave, err,
+            )
+            self.client.close()
+            self._last_modbus_slave = None
+            return False
 
     async def async_write_register(self, address: int, value: int, slave: int = 2) -> bool:
         """Write a signed or unsigned 16-bit value to a Modbus register."""
@@ -421,10 +464,21 @@ class PylontechCoordinator(DataUpdateCoordinator):
                         address, slave, res,
                     )
                     return False
+                    
+                verified = await self._verify_write_locked(
+                    address, [value], slave
+                )
 
-            # Refresh only AFTER releasing the Modbus lock.
-            await self.async_request_refresh()
-            return True
+            # A refresh failure must not change a verified write result.
+            try:
+                await self.async_request_refresh()
+            except Exception as err:
+                _LOGGER.warning(
+                    "Modbus write verification result %s at %s (Slave %s), "
+                    "but coordinator refresh failed: %s",
+                    verified, address, slave, err,
+                )
+            return verified
 
         except Exception as err:
             _LOGGER.error(
@@ -477,10 +531,21 @@ class PylontechCoordinator(DataUpdateCoordinator):
                         address, slave, res,
                     )
                     return False
+                    
+                verified = await self._verify_write_locked(
+                    address, [high, low], slave
+                )
 
-            # Refresh after releasing the Modbus lock.
-            await self.async_request_refresh()
-            return True
+            # A refresh failure must not change a verified write result.
+            try:
+                await self.async_request_refresh()
+            except Exception as err:
+                _LOGGER.warning(
+                    "Modbus write verification result %s at %s (Slave %s), "
+                    "but coordinator refresh failed: %s",
+                    verified, address, slave, err,
+                )
+            return verified
 
         except Exception as err:
             _LOGGER.error(
