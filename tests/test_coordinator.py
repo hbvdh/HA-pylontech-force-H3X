@@ -8,7 +8,24 @@ import struct
 import sys
 from types import ModuleType, SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+
+
+class FakeModbusClient:
+    """Simulate a reconnectable Modbus client without physical hardware."""
+
+    def __init__(self, **kwargs):
+        self.connected = True
+        self.read_holding_registers = AsyncMock()
+        self.connect = AsyncMock(side_effect=self._connect)
+        self.close = MagicMock(side_effect=self._close)
+
+    async def _connect(self):
+        self.connected = True
+        return True
+
+    def _close(self):
+        self.connected = False
 
 
 class CoordinatorStub:
@@ -29,9 +46,7 @@ def load_coordinator():
         "homeassistant.helpers.update_coordinator", "fh3x_under_test",
     ):
         modules[name] = ModuleType(name)
-    modules["pymodbus.client"].AsyncModbusTcpClient = lambda **kwargs: SimpleNamespace(
-        connected=True, read_holding_registers=AsyncMock()
-    )
+    modules["pymodbus.client"].AsyncModbusTcpClient = FakeModbusClient
     modules["pymodbus.exceptions"].ModbusException = type("ModbusException", (Exception,), {})
     modules["homeassistant.core"].HomeAssistant = object
     framework = modules["homeassistant.helpers.update_coordinator"]
