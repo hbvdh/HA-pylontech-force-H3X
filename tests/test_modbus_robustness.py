@@ -314,6 +314,63 @@ class ModbusRobustnessTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("grid_current_s", data)
         self.assertEqual(attempts, 2)
 
+    async def test_reversed_bms_cell_voltage_recovers_on_second_read(self):
+        # Real-world failure: minimum 3.27 V, maximum 0.20 V.
+        bad = list(self.blocks[5123])
+        bad[13:15] = [200, 3270]
+        good = list(self.blocks[5123])
+        attempts = 0
+
+        async def read(*, address, count, **kwargs):
+            nonlocal attempts
+            if address == 5123:
+                attempts += 1
+                return modbus_response(bad if attempts == 1 else good)
+            return modbus_response(list(self.blocks[address]))
+
+        self.client.read_holding_registers.side_effect = read
+        data = await self.coordinator._async_update_data()
+        self.assertAlmostEqual(data["bms_cell_voltage_min"], 3.3)
+        self.assertAlmostEqual(data["bms_cell_voltage_max"], 3.35)
+        self.assertEqual(attempts, 2)
+
+    async def test_reversed_bms_cell_voltage_rejected_after_two_bad_reads(self):
+        self.blocks[5123][13:15] = [200, 3270]
+        data = await self.coordinator._async_update_data()
+        self.assertNotIn("bms_cell_voltage_min", data)
+        self.assertNotIn("bms_cell_voltage_max", data)
+        self.assertEqual(data["bms_soc"], 50)
+        bms_reads = [call for call in self.client.read_holding_registers.await_args_list
+                     if call.kwargs["address"] == 5123]
+        self.assertEqual(len(bms_reads), 2)
+
+    async def test_valid_bms_cell_voltage_does_not_trigger_retry(self):
+        data = await self.coordinator._async_update_data()
+        self.assertAlmostEqual(data["bms_cell_voltage_min"], 3.3)
+        self.assertAlmostEqual(data["bms_cell_voltage_max"], 3.35)
+        bms_reads = [call for call in self.client.read_holding_registers.await_args_list
+                     if call.kwargs["address"] == 5123]
+        self.assertEqual(len(bms_reads), 1)
+
+    async def test_reversed_bms_cell_voltage_rejected_if_retry_fails(self):
+        bad = list(self.blocks[5123])
+        bad[13:15] = [200, 3270]
+        attempts = 0
+
+        async def read(*, address, count, **kwargs):
+            nonlocal attempts
+            if address == 5123:
+                attempts += 1
+                return modbus_response(bad) if attempts == 1 else None
+            return modbus_response(list(self.blocks[address]))
+
+        self.client.read_holding_registers.side_effect = read
+        data = await self.coordinator._async_update_data()
+        self.assertNotIn("bms_cell_voltage_min", data)
+        self.assertNotIn("bms_cell_voltage_max", data)
+        self.assertEqual(data["bms_soc"], 50)
+        self.assertEqual(attempts, 3)  # Initial read + two transport attempts.
+
     async def test_signed_16bit_write_verified_from_unsigned_register(self):
         self.client.read_holding_registers.side_effect = None
         self.client.read_holding_registers.return_value = modbus_response([65535])
@@ -392,4 +449,3 @@ class ModbusRobustnessTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
