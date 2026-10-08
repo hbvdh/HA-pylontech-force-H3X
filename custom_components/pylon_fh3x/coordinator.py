@@ -59,9 +59,15 @@ class PylontechCoordinator(DataUpdateCoordinator):
     """Coordinate Modbus reads and writes for the inverter."""
 
     def __init__(self, hass: HomeAssistant, host: str, port: int) -> None:
-        self.client = AsyncModbusTcpClient(host=host, port=port, timeout=5)
+        self.client = AsyncModbusTcpClient(
+            host=host,
+            port=port,
+            timeout=5,
+            retries=0,
+        )
         self.host = host
         self._validator = TelemetryValidator()
+        self._modbus_lock = asyncio.Lock()
         
         super().__init__(
             hass,
@@ -70,33 +76,64 @@ class PylontechCoordinator(DataUpdateCoordinator):
             update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL),
         )
 
+
     async def safe_read(self, address, count, slave):
-        
-        # Space requests to avoid overwhelming the inverter's Modbus interface.
-        await asyncio.sleep(0.1) 
-        res = await _modbus_read(self.client, address, count, slave)
-        if res is None or res.isError():
-            _LOGGER.warning("error while reading adress %s (Slave %s): %s", address, slave, res)
+        """Read Modbus registers, retrying once after a failed response."""
+        async with self._modbus_lock:
+            for attempt in range(2):
+                try:
+                    if not self.client.connected:
+                        if not await self.client.connect():
+                            raise ConnectionError("Unable to connect to H3X")
+
+                    # Avoid overwhelming the H3X Modbus gateway.
+                    await asyncio.sleep(0.1)
+
+                    res = await _modbus_read(
+                        self.client, address, count, slave
+                    )
+
+                    if res is not None and not res.isError():
+                        registers = getattr(res, "registers", None)
+
+                        if (
+                            isinstance(registers, (list, tuple))
+                            and len(registers) == count
+                            and all(
+                                type(word) is int and 0 <= word <= 0xFFFF
+                                for word in registers
+                            )
+                        ):
+                            return registers
+
+                        error = "Malformed register response"
+                    else:
+                        error = f"Modbus error response: {res}"
+
+                except (OSError, TimeoutError, ModbusException) as err:
+                    error = f"{type(err).__name__}: {err}"
+
+                if attempt == 0:
+                    _LOGGER.warning(
+                        "Modbus read failed at %s (Slave %s): %s. "
+                        "Reconnecting and retrying once.",
+                        address, slave, error,
+                    )
+                    self.client.close()
+                    await asyncio.sleep(0.2)
+                else:
+                    _LOGGER.warning(
+                        "Modbus read failed after retry at %s "
+                        "(Slave %s): %s",
+                        address, slave, error,
+                    )
+
             return None
-        registers = getattr(res, "registers", None)
-        if (
-            not isinstance(registers, (list, tuple))
-            or len(registers) != count
-            or any(type(word) is not int or not 0 <= word <= 0xFFFF for word in registers)
-        ):
-            _LOGGER.warning(
-                "Ignoring malformed Modbus response at address %s (Slave %s): expected %s uint16 registers",
-                address, slave, count,
-            )
-            return None
-        return registers
+
 
     async def _async_update_data(self):
         """Fetch data from the inverter via Modbus."""
         try:
-            if not self.client.connected:
-                await self.client.connect()
-
             data = {}
 
             # Read frequently changing inverter data in two contiguous blocks.
@@ -196,61 +233,101 @@ class PylontechCoordinator(DataUpdateCoordinator):
         except Exception as err:
             raise UpdateFailed(f"unexpected error: {err}")
 
+
     async def async_write_register(self, address: int, value: int, slave: int = 2) -> bool:
         """Write a signed or unsigned 16-bit value to a Modbus register."""
         try:
-            if not self.client.connected:
-                await self.client.connect()
-
             if value < 0:
-                value = value & 0xFFFF
+                value &= 0xFFFF
 
-            # Support the slave-ID keyword used by multiple pymodbus versions.
-            try:
-                res = await self.client.write_register(address=address, value=value, slave=slave)
-            except TypeError:
+            async with self._modbus_lock:
+                if not self.client.connected:
+                    if not await self.client.connect():
+                        raise ConnectionError("Unable to connect to H3X")
+
+                # Support different pymodbus versions.
                 try:
-                    res = await self.client.write_register(address=address, value=value, unit=slave)
+                    res = await self.client.write_register(
+                        address=address, value=value, slave=slave
+                    )
                 except TypeError:
-                    res = await self.client.write_register(address=address, value=value, device_id=slave)
+                    try:
+                        res = await self.client.write_register(
+                            address=address, value=value, unit=slave
+                        )
+                    except TypeError:
+                        res = await self.client.write_register(
+                            address=address, value=value, device_id=slave
+                        )
 
-            if res.isError():
-                _LOGGER.error("error whil writing to register %s: %s", address, res)
-                return False
+                if res is None or res.isError():
+                    _LOGGER.error(
+                        "Modbus write failed at %s (Slave %s): %s",
+                        address, slave, res,
+                    )
+                    return False
 
-            
+            # Refresh only AFTER releasing the Modbus lock.
             await self.async_request_refresh()
             return True
 
         except Exception as err:
-            _LOGGER.error("Unexpected error whil writing to: %s", err)
+            _LOGGER.error(
+                "Error writing register %s (Slave %s): %s",
+                address, slave, err,
+            )
             return False
+
         
+
     async def async_write_register_32bit(self, address: int, value: int, slave: int = 2) -> bool:
-        """Write a 32-bit signed value (S32) as two consecutive 16-bit registers."""
+        """Write a 32-bit signed value as two consecutive registers."""
         try:
-            if not self.client.connected:
-                await self.client.connect()
+            # Split into two big-endian 16-bit registers.
+            packed = struct.pack(">i", value)
+            high, low = struct.unpack(">HH", packed)
 
-            # Split the signed value into two big-endian 16-bit registers.
-            packed = struct.pack('>i', value)
-            high, low = struct.unpack('>HH', packed)
+            async with self._modbus_lock:
+                if not self.client.connected:
+                    if not await self.client.connect():
+                        raise ConnectionError("Unable to connect to H3X")
 
-            try:
-                res = await self.client.write_registers(address=address, values=[high, low], slave=slave)
-            except TypeError:
+                # Support different pymodbus versions.
                 try:
-                    res = await self.client.write_registers(address=address, values=[high, low], unit=slave)
+                    res = await self.client.write_registers(
+                        address=address,
+                        values=[high, low],
+                        slave=slave,
+                    )
                 except TypeError:
-                    res = await self.client.write_registers(address=address, values=[high, low], device_id=slave)
+                    try:
+                        res = await self.client.write_registers(
+                            address=address,
+                            values=[high, low],
+                            unit=slave,
+                        )
+                    except TypeError:
+                        res = await self.client.write_registers(
+                            address=address,
+                            values=[high, low],
+                            device_id=slave,
+                        )
 
-            if res.isError():
-                _LOGGER.error("Error writing 32-bit register %s: %s", address, res)
-                return False
+                if res is None or res.isError():
+                    _LOGGER.error(
+                        "Modbus 32-bit write failed at %s (Slave %s): %s",
+                        address, slave, res,
+                    )
+                    return False
 
+            # Refresh after releasing the Modbus lock.
             await self.async_request_refresh()
             return True
 
         except Exception as err:
-            _LOGGER.error("Unexpected error writing 32-bit register: %s", err)
+            _LOGGER.error(
+                "Error writing 32-bit register %s (Slave %s): %s",
+                address, slave, err,
+            )
             return False
+
