@@ -242,6 +242,11 @@ class PylontechCoordinator(DataUpdateCoordinator):
                                 for word in registers
                             )
                         ):
+                            if attempt == 1:
+                                _LOGGER.warning(
+                                    "Modbus retry successful at %s (Slave %s)",
+                                    address, slave,
+                                )
                             return registers
 
                         error = "Malformed register response"
@@ -262,8 +267,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
                     await asyncio.sleep(0.2)
                 else:
                     _LOGGER.warning(
-                        "Modbus read failed after retry at %s "
-                        "(Slave %s): %s",
+                        "Modbus retry failed at %s (Slave %s): %s",
                         address, slave, error,
                     )
 
