@@ -115,6 +115,22 @@ class PylontechCoordinator(DataUpdateCoordinator):
             ):
                 suspicious.append(key)
 
+        # Detect impossible relationships between individually plausible BMS
+        # readings before the stateful validator runs. For example, a cell
+        # minimum of 3.27 V cannot exceed a cell maximum of 0.20 V.
+        cell_min = data.get("bms_cell_voltage_min")
+        cell_max = data.get("bms_cell_voltage_max")
+        if (
+            isinstance(cell_min, (int, float))
+            and isinstance(cell_max, (int, float))
+            and math.isfinite(cell_min)
+            and math.isfinite(cell_max)
+            and cell_min > cell_max
+        ):
+            for key in ("bms_cell_voltage_min", "bms_cell_voltage_max"):
+                if key not in suspicious:
+                    suspicious.append(key)
+
         # Detect isolated current spikes without imposing a universal 40/100 A
         # ceiling: the CT may monitor a much larger installation. A sudden
         # change only *triggers verification*; confirmed high loads are valid.
