@@ -16,6 +16,11 @@ from .validation import TelemetryValidator, VALUE_RANGES
 
 _LOGGER = logging.getLogger(__name__)
 
+# Retry-only thresholds, not hard limits for larger installations.
+GRID_CURRENT_JUMP_RETRY_A = 50.0
+GRID_CURRENT_INITIAL_RETRY_A = 100.0
+GRID_CURRENT_RETRY_AGREEMENT_A = 10.0
+
 BATTERY_STATUS_MAP = {
     0: "Sleep",
     1: "Charging",
@@ -70,6 +75,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
         self._validator = TelemetryValidator()
         self._modbus_lock = asyncio.Lock()
         self._last_modbus_slave = None
+        self._last_valid_grid_currents = {}
         
         super().__init__(
             hass,
@@ -91,9 +97,8 @@ class PylontechCoordinator(DataUpdateCoordinator):
         await asyncio.sleep(delay)
         self._last_modbus_slave = slave
 
-    @staticmethod
-    def _find_suspicious_values(data: dict) -> list[str]:
-        """Find implausible telemetry without changing validator state."""
+    def _find_suspicious_values(self, data: dict) -> list[str]:
+        """Find implausible data or abrupt grid-current changes, without mutating state."""
         suspicious = []
 
         for key, value in data.items():
@@ -110,6 +115,22 @@ class PylontechCoordinator(DataUpdateCoordinator):
             ):
                 suspicious.append(key)
 
+        # Detect isolated current spikes without imposing a universal 40/100 A
+        # ceiling: the CT may monitor a much larger installation. A sudden
+        # change only *triggers verification*; confirmed high loads are valid.
+        for phase in "rst":
+            key = f"grid_current_{phase}"
+            current = data.get(key)
+            if not isinstance(current, (int, float)) or not math.isfinite(current):
+                continue
+            previous = self._last_valid_grid_currents.get(key)
+            if previous is None:
+                needs_retry = abs(current) > GRID_CURRENT_INITIAL_RETRY_A
+            else:
+                needs_retry = abs(current - previous) > GRID_CURRENT_JUMP_RETRY_A
+            if needs_retry and key not in suspicious:
+                suspicious.append(key)
+
         return suspicious
 
     async def _read_with_sanity_retry(
@@ -121,9 +142,8 @@ class PylontechCoordinator(DataUpdateCoordinator):
         if registers is None:
             return None
 
-        suspicious = self._find_suspicious_values(
-            decode(registers)
-        )
+        first_values = decode(registers)
+        suspicious = self._find_suspicious_values(first_values)
 
         if not suspicious:
             return registers
@@ -139,13 +159,29 @@ class PylontechCoordinator(DataUpdateCoordinator):
         )
 
         if retry_registers is None:
-            # Keep the original sample; the validator will
-            # reject its implausible values.
+            if any(key.startswith("grid_current_") for key in suspicious):
+                # Without a confirming sample a huge current jump cannot be
+                # distinguished from a corrupt Modbus response. Skip this
+                # phase block rather than publish an unverified current.
+                _LOGGER.warning(
+                    "Skipping grid phase block %s: current jump could not be verified",
+                    address,
+                )
+                return None
+            # The normal validator will reject any static out-of-range values.
             return registers
 
-        still_suspicious = self._find_suspicious_values(
-            decode(retry_registers)
-        )
+        retry_values = decode(retry_registers)
+        still_suspicious = self._find_suspicious_values(retry_values)
+        for key in suspicious:
+            if key.startswith("grid_current_") and key in still_suspicious:
+                if abs(retry_values[key] - first_values[key]) > GRID_CURRENT_RETRY_AGREEMENT_A:
+                    _LOGGER.warning(
+                        "Skipping grid phase block %s: unconfirmed current jump "
+                        "%s (first=%s A, retry=%s A)",
+                        address, key, first_values[key], retry_values[key],
+                    )
+                    return None
 
         if still_suspicious:
             _LOGGER.warning(
@@ -375,6 +411,12 @@ class PylontechCoordinator(DataUpdateCoordinator):
             data = self._validator.validate(data)
             if not data:
                 raise UpdateFailed("No data received out of inverter.")
+            # Update the comparison baseline only from values accepted by the
+            # existing stateful validator, never from rejected raw samples.
+            for phase in "rst":
+                key = f"grid_current_{phase}"
+                if key in data:
+                    self._last_valid_grid_currents[key] = data[key]
 
             return data
 
