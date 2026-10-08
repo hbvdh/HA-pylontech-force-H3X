@@ -68,6 +68,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
         self.host = host
         self._validator = TelemetryValidator()
         self._modbus_lock = asyncio.Lock()
+        self._last_modbus_slave = None
         
         super().__init__(
             hass,
@@ -76,6 +77,18 @@ class PylontechCoordinator(DataUpdateCoordinator):
             update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL),
         )
 
+    async def _pace_modbus(self, slave: int) -> None:
+        """Apply request pacing, with extra delay when switching slaves."""
+        if (
+            self._last_modbus_slave is not None
+            and self._last_modbus_slave != slave
+        ):
+            delay = 0.2
+        else:
+            delay = 0.1
+
+        await asyncio.sleep(delay)
+        self._last_modbus_slave = slave
 
     async def safe_read(self, address, count, slave):
         """Read Modbus registers, retrying once after a failed response."""
@@ -85,9 +98,10 @@ class PylontechCoordinator(DataUpdateCoordinator):
                     if not self.client.connected:
                         if not await self.client.connect():
                             raise ConnectionError("Unable to connect to H3X")
+                        self._last_modbus_slave = None
 
-                    # Avoid overwhelming the H3X Modbus gateway.
-                    await asyncio.sleep(0.1)
+                    # Respect Modbus request pacing and slave switching.
+                    await self._pace_modbus(slave)
 
                     res = await _modbus_read(
                         self.client, address, count, slave
@@ -120,6 +134,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
                         address, slave, error,
                     )
                     self.client.close()
+                    self._last_modbus_slave = None
                     await asyncio.sleep(0.2)
                 else:
                     _LOGGER.warning(
@@ -244,7 +259,10 @@ class PylontechCoordinator(DataUpdateCoordinator):
                 if not self.client.connected:
                     if not await self.client.connect():
                         raise ConnectionError("Unable to connect to H3X")
+                    self._last_modbus_slave = None
 
+                await self._pace_modbus(slave)
+                
                 # Support different pymodbus versions.
                 try:
                     res = await self.client.write_register(
@@ -291,6 +309,9 @@ class PylontechCoordinator(DataUpdateCoordinator):
                 if not self.client.connected:
                     if not await self.client.connect():
                         raise ConnectionError("Unable to connect to H3X")
+                    self._last_modbus_slave = None
+
+                await self._pace_modbus(slave) 
 
                 # Support different pymodbus versions.
                 try:
