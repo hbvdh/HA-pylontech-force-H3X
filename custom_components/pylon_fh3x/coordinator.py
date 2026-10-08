@@ -479,6 +479,18 @@ class PylontechCoordinator(DataUpdateCoordinator):
                 )
                 return False
 
+            # Only report success after the read-back matches exactly. This
+            # does not imply the device has already physically acted on it.
+            if len(expected) == 1:
+                _LOGGER.info(
+                    "Modbus write verified at %s (Slave %s): value %s",
+                    address, slave, actual[0],
+                )
+            else:
+                _LOGGER.info(
+                    "Modbus write verified at %s (Slave %s): values %s",
+                    address, slave, list(actual),
+                )
             return True
 
         except (OSError, TimeoutError, ModbusException) as err:
