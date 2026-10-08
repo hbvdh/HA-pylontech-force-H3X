@@ -417,6 +417,42 @@ class ModbusRobustnessTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.client.write_registers.await_args.kwargs["values"], expected)
         self.assertEqual(self.client.write_registers.await_count, 1)
 
+    async def test_verified_16bit_write_logs_success_after_readback(self):
+        self.client.read_holding_registers.side_effect = None
+        self.client.read_holding_registers.return_value = modbus_response([0])
+        with self.assertLogs(coordinator_module._LOGGER, level="INFO") as messages:
+            result = await self.coordinator.async_write_register(40901, 0, 2)
+        self.assertTrue(result)
+        self.client.write_register.assert_awaited_once()
+        self.client.read_holding_registers.assert_awaited_once()
+        self.assertTrue(any(
+            "Modbus write verified at 40901 (Slave 2): value 0" in line
+            for line in messages.output
+        ), messages.output)
+
+    async def test_verified_32bit_write_logs_both_register_values(self):
+        expected = [0, 0]
+        self.client.read_holding_registers.side_effect = None
+        self.client.read_holding_registers.return_value = modbus_response(expected)
+        with self.assertLogs(coordinator_module._LOGGER, level="INFO") as messages:
+            result = await self.coordinator.async_write_register_32bit(40401, 0, 2)
+        self.assertTrue(result)
+        self.client.write_registers.assert_awaited_once()
+        self.client.read_holding_registers.assert_awaited_once()
+        self.assertTrue(any(
+            "Modbus write verified at 40401 (Slave 2): values [0, 0]" in line
+            for line in messages.output
+        ), messages.output)
+
+    async def test_failed_write_readback_does_not_log_success(self):
+        self.client.read_holding_registers.side_effect = None
+        self.client.read_holding_registers.return_value = modbus_response([456])
+        with self.assertLogs(coordinator_module._LOGGER, level="ERROR") as messages:
+            result = await self.coordinator.async_write_register(40901, 123, 2)
+        self.assertFalse(result)
+        self.assertFalse(any("Modbus write verified" in line for line in messages.output))
+        self.assertTrue(any("Modbus write verification mismatch" in line for line in messages.output))
+
     async def test_write_readback_mismatch_returns_false_without_write_retry(self):
         self.client.read_holding_registers.side_effect = None
         self.client.read_holding_registers.return_value = modbus_response([456])
