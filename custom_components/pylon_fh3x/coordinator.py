@@ -499,6 +499,69 @@ class PylontechCoordinator(DataUpdateCoordinator):
                 "(Slave %s): %s",
                 address, slave, err,
             )
+            # The caller will reconnect and check the register again. Avoid
+            # closing the connection twice before that recovery step.
+            return False
+
+    async def _reconcile_write_locked(
+        self, address: int, expected: list[int], slave: int
+    ) -> bool:
+        """After an unconfirmed write, reconnect and READ; never repeat the write.
+
+        The write might have reached the inverter even if its acknowledgement was
+        lost. A matching read-back confirms the *requested register state*, not
+        that a write took place (it may already have held that value).
+        """
+        # The caller already owns _modbus_lock. Never call safe_read here;
+        # re-acquiring the same lock would deadlock.
+        self.client.close()
+        self._last_modbus_slave = None
+        await asyncio.sleep(0.2)
+        try:
+            if not await self.client.connect():
+                raise ConnectionError("Unable to reconnect for write verification")
+            await self._pace_modbus(slave)
+            response = await _modbus_read(
+                self.client, address, len(expected), slave
+            )
+            if response is None or response.isError():
+                _LOGGER.error(
+                    "Modbus write outcome unknown at %s (Slave %s): "
+                    "reconnect read returned %s; write NOT repeated",
+                    address, slave, response,
+                )
+                return False
+            actual = getattr(response, "registers", None)
+            if not isinstance(actual, (list, tuple)) or (
+                len(actual) != len(expected)
+                or not all(type(word) is int and 0 <= word <= 0xFFFF for word in actual)
+            ):
+                _LOGGER.error(
+                    "Modbus write outcome unknown at %s (Slave %s): "
+                    "invalid reconnect read %s; write NOT repeated",
+                    address, slave, actual,
+                )
+                return False
+            if list(actual) != expected:
+                _LOGGER.error(
+                    "Modbus write requested state NOT confirmed at %s (Slave %s): "
+                    "expected %s, read %s; write NOT repeated",
+                    address, slave, expected, list(actual),
+                )
+                return False
+            _LOGGER.warning(
+                "Modbus write acknowledgement/verification was uncertain at %s "
+                "(Slave %s), but requested register state confirmed by reconnect "
+                "read-back: %s; write NOT repeated",
+                address, slave, list(actual),
+            )
+            return True
+        except (OSError, TimeoutError, ModbusException) as err:
+            _LOGGER.error(
+                "Modbus write outcome unknown at %s (Slave %s): "
+                "reconnect read failed: %s; write NOT repeated",
+                address, slave, err,
+            )
             self.client.close()
             self._last_modbus_slave = None
             return False
@@ -517,31 +580,46 @@ class PylontechCoordinator(DataUpdateCoordinator):
 
                 await self._pace_modbus(slave)
                 
-                # Support different pymodbus versions.
+                # A timeout during a write does NOT prove it was rejected.
+                # Inspect the register after reconnect, never blindly re-write.
                 try:
-                    res = await self.client.write_register(
-                        address=address, value=value, slave=slave
-                    )
-                except TypeError:
                     try:
                         res = await self.client.write_register(
-                            address=address, value=value, unit=slave
+                            address=address, value=value, slave=slave
                         )
                     except TypeError:
-                        res = await self.client.write_register(
-                            address=address, value=value, device_id=slave
+                        try:
+                            res = await self.client.write_register(
+                                address=address, value=value, unit=slave
+                            )
+                        except TypeError:
+                            res = await self.client.write_register(
+                                address=address, value=value, device_id=slave
+                            )
+                    acknowledged = res is not None and not res.isError()
+                except (OSError, TimeoutError, ModbusException) as err:
+                    acknowledged = False
+                    _LOGGER.warning(
+                        "Modbus write response uncertain at %s (Slave %s): %s; "
+                        "checking requested register state after reconnect",
+                        address, slave, err,
+                    )
+                else:
+                    if not acknowledged:
+                        _LOGGER.warning(
+                            "Modbus write not acknowledged at %s (Slave %s): %s; "
+                            "checking requested register state after reconnect",
+                            address, slave, res,
                         )
 
-                if res is None or res.isError():
-                    _LOGGER.error(
-                        "Modbus write failed at %s (Slave %s): %s",
-                        address, slave, res,
-                    )
-                    return False
-                    
-                verified = await self._verify_write_locked(
-                    address, [value], slave
+                verified = (
+                    await self._verify_write_locked(address, [value], slave)
+                    if acknowledged else False
                 )
+                if not verified:
+                    verified = await self._reconcile_write_locked(
+                        address, [value], slave
+                    )
 
             # A refresh failure must not change a verified write result.
             try:
@@ -578,37 +656,44 @@ class PylontechCoordinator(DataUpdateCoordinator):
 
                 await self._pace_modbus(slave) 
 
-                # Support different pymodbus versions.
                 try:
-                    res = await self.client.write_registers(
-                        address=address,
-                        values=[high, low],
-                        slave=slave,
-                    )
-                except TypeError:
                     try:
                         res = await self.client.write_registers(
-                            address=address,
-                            values=[high, low],
-                            unit=slave,
+                            address=address, values=[high, low], slave=slave,
                         )
                     except TypeError:
-                        res = await self.client.write_registers(
-                            address=address,
-                            values=[high, low],
-                            device_id=slave,
+                        try:
+                            res = await self.client.write_registers(
+                                address=address, values=[high, low], unit=slave,
+                            )
+                        except TypeError:
+                            res = await self.client.write_registers(
+                                address=address, values=[high, low], device_id=slave,
+                            )
+                    acknowledged = res is not None and not res.isError()
+                except (OSError, TimeoutError, ModbusException) as err:
+                    acknowledged = False
+                    _LOGGER.warning(
+                        "Modbus 32-bit write response uncertain at %s (Slave %s): "
+                        "%s; checking requested register state after reconnect",
+                        address, slave, err,
+                    )
+                else:
+                    if not acknowledged:
+                        _LOGGER.warning(
+                            "Modbus 32-bit write not acknowledged at %s (Slave %s): "
+                            "%s; checking requested register state after reconnect",
+                            address, slave, res,
                         )
 
-                if res is None or res.isError():
-                    _LOGGER.error(
-                        "Modbus 32-bit write failed at %s (Slave %s): %s",
-                        address, slave, res,
-                    )
-                    return False
-                    
-                verified = await self._verify_write_locked(
-                    address, [high, low], slave
+                verified = (
+                    await self._verify_write_locked(address, [high, low], slave)
+                    if acknowledged else False
                 )
+                if not verified:
+                    verified = await self._reconcile_write_locked(
+                        address, [high, low], slave
+                    )
 
             # A refresh failure must not change a verified write result.
             try:
