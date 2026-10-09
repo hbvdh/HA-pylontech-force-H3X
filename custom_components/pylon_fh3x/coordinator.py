@@ -13,6 +13,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .const import DOMAIN, DEFAULT_SCAN_INTERVAL
 from .validation import TelemetryValidator, VALUE_RANGES
+from .telemetry_guard import TelemetryTransitionGuard
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -73,6 +74,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
         )
         self.host = host
         self._validator = TelemetryValidator()
+        self._transition_guard = TelemetryTransitionGuard()
         self._modbus_lock = asyncio.Lock()
         self._last_modbus_slave = None
         self._last_valid_grid_currents = {}
@@ -147,10 +149,14 @@ class PylontechCoordinator(DataUpdateCoordinator):
             if needs_retry and key not in suspicious:
                 suspicious.append(key)
 
+        # Temporal checks complement broad static ranges (e.g. 35 -> 0 C).
+        for key in self._transition_guard.suspicious(data):
+            if key not in suspicious:
+                suspicious.append(key)
         return suspicious
 
     async def _read_with_sanity_retry(
-        self, address, count, slave, decode
+        self, address, count, slave, decode, unconfirmed=None
     ):
         """Retry a register block once if decoded values look implausible."""
         registers = await self.safe_read(address, count, slave)
@@ -160,6 +166,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
 
         first_values = decode(registers)
         suspicious = self._find_suspicious_values(first_values)
+        first_transitions = self._transition_guard.suspicious(first_values)
 
         if not suspicious:
             return registers
@@ -175,6 +182,12 @@ class PylontechCoordinator(DataUpdateCoordinator):
         )
 
         if retry_registers is None:
+            if unconfirmed is not None:
+                for key in first_transitions:
+                    if self._transition_guard.should_suppress_unconfirmed(
+                        key, first_values[key]
+                    ):
+                        unconfirmed.add(key)
             if any(key.startswith("grid_current_") for key in suspicious):
                 # Without a confirming sample a huge current jump cannot be
                 # distinguished from a corrupt Modbus response. Skip this
@@ -189,6 +202,27 @@ class PylontechCoordinator(DataUpdateCoordinator):
 
         retry_values = decode(retry_registers)
         still_suspicious = self._find_suspicious_values(retry_values)
+        # A confirmed large change may be genuine. If repeat readings differ,
+        # suppress ONLY the unconfirmed field, never the whole register block.
+        # Temperatures rising rapidly are fail-open to preserve safety signals.
+        second_transitions = self._transition_guard.suspicious(retry_values)
+        for key in first_transitions | second_transitions:
+            if key not in retry_values:
+                continue
+            if key not in second_transitions:
+                continue  # Second reading returned to a plausible value.
+            if key in first_transitions and self._transition_guard.confirmed(
+                key, first_values[key], retry_values[key]
+            ):
+                continue  # Two consistent samples confirm a real change.
+            if unconfirmed is not None and self._transition_guard.should_suppress_unconfirmed(
+                key, retry_values[key]
+            ):
+                unconfirmed.add(key)
+                _LOGGER.warning(
+                    "Ignoring unconfirmed temporal anomaly %s at %s (Slave %s)",
+                    key, address, slave,
+                )
         for key in suspicious:
             if key.startswith("grid_current_") and key in still_suspicious:
                 if abs(retry_values[key] - first_values[key]) > GRID_CURRENT_RETRY_AGREEMENT_A:
@@ -278,6 +312,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
         """Fetch data from the inverter via Modbus."""
         try:
             data = {}
+            unconfirmed = set()
 
             # Read frequently changing inverter data in two contiguous blocks.
             r_inverter_main = await self._read_with_sanity_retry(
@@ -298,6 +333,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
                     "inverter_temperature": get_16bit_int(regs, 46) * 0.1,
                     "heatsink_temperature": get_16bit_int(regs, 47) * 0.1,
                 },
+                unconfirmed=unconfirmed,
             )
             if r_inverter_main:
                 data["ac_total_power"] = get_32bit_int(r_inverter_main, 0)
@@ -336,6 +372,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
                     "grid_power_s": get_32bit_int(regs, 5),
                     "grid_power_t": get_32bit_int(regs, 7),
                 },
+                unconfirmed=unconfirmed,
             )
             if r_grid_phases:
                 data["grid_current_r"] = get_16bit_int(r_grid_phases, 0) * 0.1
@@ -355,6 +392,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
                     "battery_current": get_16bit_int(regs, 9) * 0.1,
                     "battery_soc": get_16bit_uint(regs, 26),
                 },
+                unconfirmed=unconfirmed,
             )
             if r_inverter_battery:
                 data["total_grid_import"] = get_32bit_float(r_inverter_battery, 0)
@@ -393,6 +431,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
                     "period_3": get_16bit_uint(regs, 19),
                     "period_4": get_16bit_uint(regs, 25),
                 },
+                unconfirmed=unconfirmed,
             )
             if r_ems:
                 data["charge_discharge_power"] = get_16bit_int(r_ems, 0)
@@ -417,6 +456,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
                     "bms_cell_voltage_min": get_16bit_uint(regs, 14) * 0.001,
                     "bms_soh": get_16bit_uint(regs, 29),
                 },
+                unconfirmed=unconfirmed,
             )
             if r_bms:
                 data["bms_voltage"] = get_16bit_uint(r_bms, 0) * 0.1
@@ -427,6 +467,9 @@ class PylontechCoordinator(DataUpdateCoordinator):
                 data["bms_cell_voltage_min"] = get_16bit_uint(r_bms, 14) * 0.001
                 data["bms_soh"] = get_16bit_uint(r_bms, 29)
 
+            # Drop just the unconfirmed fields; preserve all other readings.
+            for key in unconfirmed:
+                data.pop(key, None)
             # Validate before exposing values or deriving any power sensors.
             data = self._validator.validate(data)
             if not data:
@@ -438,6 +481,8 @@ class PylontechCoordinator(DataUpdateCoordinator):
                 if key in data:
                     self._last_valid_grid_currents[key] = data[key]
 
+            # Baselines must never be updated with rejected/unconfirmed values.
+            self._transition_guard.remember(data)
             return data
 
         except UpdateFailed:
