@@ -464,8 +464,86 @@ class ModbusRobustnessTests(unittest.IsolatedAsyncioTestCase):
         self.client.read_holding_registers.side_effect = OSError("link lost")
         ok = await self.coordinator.async_write_register(40901, 123, 2)
         self.assertFalse(ok)
-        self.client.close.assert_called_once()
+        self.client.close.assert_called()
         self.assertEqual(self.client.write_register.await_count, 1)
+
+    async def test_write_ack_lost_but_desired_state_present_16bit(self):
+        """A timed-out write must not be sent twice if readback matches."""
+        self.client.write_register.side_effect = TimeoutError("ack lost")
+        self.client.read_holding_registers.side_effect = None
+        self.client.read_holding_registers.return_value = modbus_response([65036])
+        with self.assertLogs(coordinator_module._LOGGER, level="WARNING") as messages:
+            ok = await self.coordinator.async_write_register(40901, -500, 2)
+        self.assertTrue(ok)
+        self.client.write_register.assert_awaited_once()
+        self.client.close.assert_called_once()
+        self.client.connect.assert_awaited_once()
+        self.client.read_holding_registers.assert_awaited_once()
+        self.assertTrue(any("requested register state confirmed" in msg
+                            for msg in messages.output))
+
+    async def test_write_ack_lost_different_state_no_second_write(self):
+        self.client.write_register.side_effect = TimeoutError("ack lost")
+        self.client.read_holding_registers.side_effect = None
+        self.client.read_holding_registers.return_value = modbus_response([0])
+        with self.assertLogs(coordinator_module._LOGGER, level="ERROR") as messages:
+            ok = await self.coordinator.async_write_register(40901, -500, 2)
+        self.assertFalse(ok)
+        self.client.write_register.assert_awaited_once()
+        self.assertTrue(any("state NOT confirmed" in msg for msg in messages.output))
+
+    async def test_write_ack_lost_and_readback_unavailable_is_unknown(self):
+        self.client.write_register.side_effect = TimeoutError("ack lost")
+        self.client.read_holding_registers.side_effect = TimeoutError("read lost")
+        with self.assertLogs(coordinator_module._LOGGER, level="ERROR") as messages:
+            ok = await self.coordinator.async_write_register(40907, 4, 2)
+        self.assertFalse(ok)
+        self.client.write_register.assert_awaited_once()
+        self.assertTrue(any("outcome unknown" in msg for msg in messages.output))
+
+    async def test_write_error_response_checked_before_declaring_failure(self):
+        self.client.write_register.return_value = modbus_response([], error=True)
+        self.client.read_holding_registers.side_effect = None
+        self.client.read_holding_registers.return_value = modbus_response([4])
+        self.assertTrue(await self.coordinator.async_write_register(40907, 4, 2))
+        self.client.write_register.assert_awaited_once()
+
+    async def test_successful_ack_first_read_timeout_then_reconnect_read_matches(self):
+        self.client.read_holding_registers.side_effect = [
+            TimeoutError("verify failed"), modbus_response([0]),
+        ]
+        self.assertTrue(await self.coordinator.async_write_register(40901, 0, 2))
+        self.client.write_register.assert_awaited_once()
+        self.assertEqual(self.client.read_holding_registers.await_count, 2)
+
+    async def test_32bit_write_ack_lost_reconnect_checks_both_words(self):
+        value = -7000
+        expected = list(struct.unpack(">HH", struct.pack(">i", value)))
+        self.client.write_registers.side_effect = TimeoutError("ack lost")
+        self.client.read_holding_registers.side_effect = None
+        self.client.read_holding_registers.return_value = modbus_response(expected)
+        self.assertTrue(await self.coordinator.async_write_register_32bit(40401, value, 2))
+        self.client.write_registers.assert_awaited_once()
+        self.client.read_holding_registers.assert_awaited_once()
+
+    async def test_32bit_write_ack_lost_wrong_low_word_does_not_pass(self):
+        value = -7000
+        expected = list(struct.unpack(">HH", struct.pack(">i", value)))
+        self.client.write_registers.side_effect = TimeoutError("ack lost")
+        self.client.read_holding_registers.side_effect = None
+        self.client.read_holding_registers.return_value = modbus_response([
+            expected[0], expected[1] ^ 1,
+        ])
+        self.assertFalse(await self.coordinator.async_write_register_32bit(40401, value, 2))
+        self.client.write_registers.assert_awaited_once()
+
+    async def test_reconnect_failure_leaves_write_outcome_unknown(self):
+        self.client.write_register.side_effect = TimeoutError("ack lost")
+        self.client.connect_result = False
+        with self.assertLogs(coordinator_module._LOGGER, level="ERROR") as messages:
+            self.assertFalse(await self.coordinator.async_write_register(40907, 4, 2))
+        self.assertTrue(any("outcome unknown" in msg for msg in messages.output))
+        self.client.write_register.assert_awaited_once()
 
     async def test_successful_write_still_true_if_refresh_fails(self):
         self.client.read_holding_registers.side_effect = None
