@@ -62,13 +62,21 @@ Energy and cycle counters need two consistent samples at startup. Until then the
 are unknown. After startup, compare each counter with its last accepted value and
 the actual elapsed time, including time spent missing readings.
 
-Energy growth is bounded by the corresponding power sanity limit. Allow 0.1 kWh
-or two float32 precision steps, whichever is larger, for rounding and batched
-updates. The cycle counter allows 100 cycles per day plus a one-cycle margin.
+PV and battery energy growth follows the corresponding power sanity limit and
+allows 0.1 kWh or two float32 precision steps, whichever is larger, for rounding
+and batched updates. The **grid import/export lifetime counters** use a separate
+**25 kW** equivalent growth limit and **0.02 kWh** tolerance (or two float32
+precision steps, whichever is larger). This rejects the observed 206.06 to
+206.87 kWh jump in 100 seconds, which would require 29.16 kW average import.
+The cycle counter allows 100 cycles per day plus a one-cycle margin.
 These are corruption checks, not estimates of expected consumption or cycle life.
+The 25 kW counter bound allows margin for a 3x25 A connection but may need
+adjustment for sites capable of higher grid power.
 
 An impossible increase is rejected even if it repeats, and does not replace the
-last accepted baseline. A decrease of 10% or less is rejected, even if it repeats,
+last accepted baseline. The tighter grid counter bound prevents the observed
+single erroneous high reading from blocking subsequent ordinary readings.
+It does not repair bad values already stored by Home Assistant. A decrease of 10% or less is rejected, even if it repeats,
 until the counter reaches its last accepted value again. This includes small
 backward steps such as 2025.52001953125 to 2025.50854492188 kWh.
 A decrease of more than 10% needs a second consistent sample before it is accepted
