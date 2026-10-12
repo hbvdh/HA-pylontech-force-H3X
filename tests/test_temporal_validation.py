@@ -168,7 +168,7 @@ class TemporalCoordinatorTests(unittest.IsolatedAsyncioTestCase):
         self.coordinator.safe_read = AsyncMock(side_effect=read)
         data = await self.coordinator._async_update_data()
         self.assertEqual(calls, 2)
-        self.assertEqual(data["pv1_current"], 2.3)
+        self.assertAlmostEqual(data["pv1_current"], 2.3)
         self.assertEqual(data["pv2_voltage"], 188.0)
         self.assertAlmostEqual(data["pv1_power"], 494.5)
         self.assertAlmostEqual(data["pv2_power"], 770.8)
@@ -197,7 +197,7 @@ class TemporalCoordinatorTests(unittest.IsolatedAsyncioTestCase):
         for key in ("pv1_current", "pv1_power", "pv2_voltage", "pv2_power"):
             self.assertNotIn(key, data)
         self.assertEqual(data["pv1_voltage"], 215.0)
-        self.assertEqual(data["pv2_current"], 4.1)
+        self.assertAlmostEqual(data["pv2_current"], 4.1)
         self.assertEqual(data["ac_total_power"], 3000)
 
     async def test_two_consistent_pv_changes_are_accepted(self):
