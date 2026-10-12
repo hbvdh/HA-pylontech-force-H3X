@@ -149,6 +149,7 @@ class TemporalCoordinatorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_corrupt_pv1_current_and_pv2_voltage_recover_on_retry(self):
         blocks = valid_blocks()
+        blocks[30100][19:23] = [2150, 23, 1880, 41]
         self.coordinator._transition_guard.remember({
             "pv1_current": 2.3, "pv2_voltage": 188.0,
         })
@@ -167,13 +168,14 @@ class TemporalCoordinatorTests(unittest.IsolatedAsyncioTestCase):
         self.coordinator.safe_read = AsyncMock(side_effect=read)
         data = await self.coordinator._async_update_data()
         self.assertEqual(calls, 2)
-        self.assertEqual(data["pv1_current"], 3.0)
-        self.assertEqual(data["pv2_voltage"], 400.0)
-        self.assertEqual(data["pv1_power"], 1200.0)
-        self.assertEqual(data["pv2_power"], 1200.0)
+        self.assertEqual(data["pv1_current"], 2.3)
+        self.assertEqual(data["pv2_voltage"], 188.0)
+        self.assertAlmostEqual(data["pv1_power"], 494.5)
+        self.assertAlmostEqual(data["pv2_power"], 770.8)
 
     async def test_failed_retry_discards_only_corrupt_pv_sources_and_power(self):
         blocks = valid_blocks()
+        blocks[30100][19:23] = [2150, 23, 1880, 41]
         self.coordinator._transition_guard.remember({
             "pv1_current": 2.3, "pv2_voltage": 188.0,
         })
@@ -194,8 +196,8 @@ class TemporalCoordinatorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, 2)
         for key in ("pv1_current", "pv1_power", "pv2_voltage", "pv2_power"):
             self.assertNotIn(key, data)
-        self.assertEqual(data["pv1_voltage"], 400.0)
-        self.assertEqual(data["pv2_current"], 3.0)
+        self.assertEqual(data["pv1_voltage"], 215.0)
+        self.assertEqual(data["pv2_current"], 4.1)
         self.assertEqual(data["ac_total_power"], 3000)
 
     async def test_two_consistent_pv_changes_are_accepted(self):
