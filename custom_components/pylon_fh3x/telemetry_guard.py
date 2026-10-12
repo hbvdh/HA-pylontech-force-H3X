@@ -25,6 +25,13 @@ class TransitionProfile:
 # Deliberately conservative first rollout. Add profiles only after proving
 # their thresholds with device data; power can legitimately jump instantly.
 TRANSITION_PROFILES = {
+    # PV MPPT readings can move rapidly under clouds or on startup. Only
+    # ask for a second sample; never cap legitimate confirmed PV current.
+    # All three inputs use the same conservative profiles.
+    **{f"pv{n}_voltage": TransitionProfile(45.0, 2.0, 60.0, 8.0)
+       for n in range(1, 4)},
+    **{f"pv{n}_current": TransitionProfile(4.0, 0.1, 60.0, 1.0)
+       for n in range(1, 4)},
     "heatsink_temperature": TransitionProfile(12.0, 0.4, 60.0, 1.5, False),
     "inverter_temperature": TransitionProfile(12.0, 0.4, 60.0, 1.5, False),
     "bms_temperature": TransitionProfile(12.0, 0.4, 60.0, 1.5, False),
