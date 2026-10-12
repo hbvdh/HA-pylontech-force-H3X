@@ -1,3 +1,5 @@
+Fork from https://github.com/wietse108/HA-pylontech-force-H3X
+
 # Pylontech Force H3X Integration for Home Assistant via Modbus TCP
 
 ![HACS Custom](https://img.shields.io/badge/HACS-Custom_Repository-orange.svg?style=for-the-badge)

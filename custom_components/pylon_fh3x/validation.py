@@ -13,6 +13,11 @@ INVERTER_POWER_LIMIT = 30_000
 PV_POWER_LIMIT = 40_000
 # The CT measures the whole installation, not just the inverter output.
 GRID_POWER_LIMIT = 1_000_000
+# Grid lifetime counters need a tighter limit than instantaneous CT readings.
+# This 25 kW sanity bound is not an H3X control or protection setting.
+GRID_COUNTER_POWER_LIMIT = 25_000
+GRID_COUNTER_TOLERANCE_KWH = 0.02
+GRID_ENERGY_COUNTERS = {"total_grid_import", "total_grid_export"}
 # Match HA Recorder's reset boundary for TOTAL_INCREASING. Smaller dips
 # must never be published as resets, even when the same bad read repeats.
 COUNTER_RESET_RATIO = 0.9
@@ -51,11 +56,12 @@ VALUE_RANGES = {
     **{f"grid_power_{phase}": (-350_000, 350_000) for phase in "rst"},
 }
 
-# Maximum counter growth per second, using the same generous power limits.
+# Maximum counter growth per second. Lifetime grid counters use a tighter
+# bound than instantaneous CT power measurements.
 COUNTER_RATES = {
     "pv_total_energy": PV_POWER_LIMIT / 3_600_000,
-    "total_grid_import": GRID_POWER_LIMIT / 3_600_000,
-    "total_grid_export": GRID_POWER_LIMIT / 3_600_000,
+    "total_grid_import": GRID_COUNTER_POWER_LIMIT / 3_600_000,
+    "total_grid_export": GRID_COUNTER_POWER_LIMIT / 3_600_000,
     "total_battery_charge": INVERTER_POWER_LIMIT / 3_600_000,
     "total_battery_discharge": INVERTER_POWER_LIMIT / 3_600_000,
     "bms_cycles": 100 / 86400,
@@ -76,7 +82,8 @@ class TelemetryValidator:
         # Float32 counters lose precision as lifetime totals grow. Allow two
         # float32 ULPs as well as the device's small, batched counter updates.
         tolerance = 1 if key == "bms_cycles" else max(
-            0.1, 2 ** (math.frexp(max(previous, current))[1] - 23)
+            GRID_COUNTER_TOLERANCE_KWH if key in GRID_ENERGY_COUNTERS else 0.1,
+            2 ** (math.frexp(max(previous, current))[1] - 23),
         )
         return 0 <= current - previous <= COUNTER_RATES[key] * max(0, elapsed) + tolerance
 
