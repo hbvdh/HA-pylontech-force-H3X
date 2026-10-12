@@ -32,7 +32,8 @@ ratings or protection settings. Limits live in
 | Measurement | Accepted range |
 | --- | --- |
 | Inverter AC, battery and EPS power | -30,000 to 30,000 W |
-| PV total and calculated string power | 0 to 40,000 W |
+| PV Total Power (`pv_total_power`) | 0 to 10,000 W (fork-specific threshold) |
+| Calculated PV string power and PV energy-counter rate | Existing 40,000 W sanity bound (unchanged) |
 | Grid total power | -1,000,000 to 1,000,000 W |
 | Grid power per phase | -350,000 to 350,000 W |
 | Battery and BMS stack voltage | 0 to 1,000 V |
@@ -53,7 +54,8 @@ defines register types, units, scaling, signs and percentage fields. The
 [Pylontech Force H3X datasheet](https://shop.kpenergy.se/globalassets/product-sheets/inverters/pylontech/pylontech-force-h3x-hybrid-ess-datasheet-260121-en.pdf)
 lists models up to 15 kW, 24 kW PV input, 1,000 V maximum PV voltage, 50 A
 continuous battery current and 22.5 kVA peak backup output. The sanity limits allow
-margin above these ratings. The separate CT limits are deliberately much wider:
+margin above these ratings. The separate PV Total Power threshold rejects the >15 kW spikes seen on a 2.5 kW installation. It is a conservative fork-specific filter, not a universal Force H3X rating. Sites with more than 10 kW of PV output must adjust this threshold before using the fork.
+The separate CT limits are deliberately much wider:
 the grid connection can supply loads beyond the inverter's own rating.
 
 ## Cumulative counters
