@@ -58,6 +58,23 @@ margin above these ratings. The separate PV Total Power threshold rejects the >1
 The separate CT limits are deliberately much wider:
 the grid connection can supply loads beyond the inverter's own rating.
 
+## PV MPPT transition checks
+
+The temporal guard now also monitors PV1/PV2/PV3 voltage and current (registers
+30119–30124). A fast change greater than 45 V plus 2 V per elapsed second,
+or 4 A plus 0.1 A per elapsed second, within 60 seconds of the previous
+accepted sample triggers a second read of block 30100. These are retry
+thresholds, **not** permanent PV production or current limits.
+
+When the repeated measurement is plausible, it is used. Two matching unusual
+measurements are accepted as a genuine transition. If the retry fails or
+does not confirm the transition, the suspect PV source field is omitted,
+which also omits the derived PV string power for that poll. Unrelated readings
+are still published. This is especially intended to detect the observed
+PV1 2.3 → 9.1 A / PV2 188 → 0 V simultaneous glitch. It is possible for a
+repeated corrupt reading to pass confirmation; these filters are not a
+replacement for a firmware fix.
+
 ## Cumulative counters
 
 Energy and cycle counters need two consistent samples at startup. Until then they
