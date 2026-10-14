@@ -148,6 +148,42 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
                     put_int(self.blocks[address], offset, value)
                     self.assertIsNone((await self.poll()).get(key))
 
+    async def test_pv_total_spike_over_10kw_rejected_after_retry(self):
+        for spike in (15_000, 21_000):
+            with self.subTest(spike=spike):
+                self.blocks = valid_blocks()
+                put_int(self.blocks[30100], 27, spike)
+                data = await self.poll()
+                self.assertNotIn("pv_total_power", data)
+                self.assertEqual(data["pv1_voltage"], 400.0)
+                self.assertEqual(data["ac_total_power"], 3000)
+
+    async def test_pv_total_10kw_boundary_is_allowed(self):
+        self.blocks = valid_blocks()
+        put_int(self.blocks[30100], 27, 10_000)
+        data = await self.poll()
+        self.assertEqual(data["pv_total_power"], 10_000)
+
+    async def test_pv_total_spike_recovers_with_clean_second_read(self):
+        self.blocks = valid_blocks()
+        bad = list(self.blocks[30100])
+        put_int(bad, 27, 20_000)
+        good = list(self.blocks[30100])
+        original = self.coordinator.safe_read
+        reads = 0
+
+        async def read(address, count, slave):
+            nonlocal reads
+            if address == 30100:
+                reads += 1
+                return bad if reads == 1 else good
+            return await original(address, count, slave)
+
+        self.coordinator.safe_read = AsyncMock(side_effect=read)
+        data = await self.poll()
+        self.assertEqual(reads, 2)
+        self.assertEqual(data["pv_total_power"], 2400)
+
     async def test_invalid_voltage_current_soc_soh_and_temperature(self):
         for address, offset, key, raw in (
             (30100, 19, "pv1_voltage", 65535),

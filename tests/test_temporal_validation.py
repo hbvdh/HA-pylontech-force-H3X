@@ -23,6 +23,28 @@ class TemporalGuardUnitTests(unittest.TestCase):
     def test_stale_history_does_not_block_a_new_reading(self):
         self.assertFalse(self.guard.is_suspicious("heatsink_temperature", 0, now=300))
 
+    def test_pv1_current_spike_and_pv2_voltage_drop_flagged(self):
+        guard = TelemetryTransitionGuard()
+        guard.remember({
+            "pv1_current": 2.3, "pv2_voltage": 188.0,
+        }, now=100)
+        self.assertTrue(guard.is_suspicious("pv1_current", 9.1, now=105))
+        self.assertTrue(guard.is_suspicious("pv2_voltage", 0, now=105))
+        self.assertTrue(guard.should_suppress_unconfirmed("pv1_current", 9.1))
+        self.assertTrue(guard.should_suppress_unconfirmed("pv2_voltage", 0))
+
+    def test_pv_cloud_variation_not_unnecessarily_flagged(self):
+        guard = TelemetryTransitionGuard()
+        guard.remember({"pv1_current": 2.3, "pv2_voltage": 188}, now=100)
+        self.assertFalse(guard.is_suspicious("pv1_current", 3.2, now=105))
+        self.assertFalse(guard.is_suspicious("pv2_voltage", 173, now=105))
+        self.assertFalse(guard.is_suspicious("pv3_current", 10, now=105))
+
+    def test_pv_transitions_not_checked_after_long_gap(self):
+        guard = TelemetryTransitionGuard()
+        guard.remember({"pv2_voltage": 188}, now=100)
+        self.assertFalse(guard.is_suspicious("pv2_voltage", 0, now=200))
+
     def test_power_step_is_not_temporally_restricted(self):
         self.assertFalse(self.guard.is_suspicious("battery_power", 5000, now=105))
         self.assertFalse(self.guard.is_suspicious("charge_discharge_power", -1000, now=105))
@@ -124,6 +146,79 @@ class TemporalCoordinatorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(attempts[30156], 2)
         self.assertNotIn("battery_soc", data)
         self.assertEqual(data["battery_power"], 1000)
+
+    async def test_corrupt_pv1_current_and_pv2_voltage_recover_on_retry(self):
+        blocks = valid_blocks()
+        blocks[30100][19:23] = [2150, 23, 1880, 41]
+        self.coordinator._transition_guard.remember({
+            "pv1_current": 2.3, "pv2_voltage": 188.0,
+        })
+        first = blocks[30100].copy()
+        first[20] = 91   # 9.1 A, was 2.3 A
+        first[21] = 0    # 0 V, was 188 V
+        calls = 0
+
+        async def read(address, count, slave):
+            nonlocal calls
+            if address == 30100:
+                calls += 1
+                return first if calls == 1 else blocks[30100]
+            return blocks[address]
+
+        self.coordinator.safe_read = AsyncMock(side_effect=read)
+        data = await self.coordinator._async_update_data()
+        self.assertEqual(calls, 2)
+        self.assertAlmostEqual(data["pv1_current"], 2.3)
+        self.assertEqual(data["pv2_voltage"], 188.0)
+        self.assertAlmostEqual(data["pv1_power"], 494.5)
+        self.assertAlmostEqual(data["pv2_power"], 770.8)
+
+    async def test_failed_retry_discards_only_corrupt_pv_sources_and_power(self):
+        blocks = valid_blocks()
+        blocks[30100][19:23] = [2150, 23, 1880, 41]
+        self.coordinator._transition_guard.remember({
+            "pv1_current": 2.3, "pv2_voltage": 188.0,
+        })
+        first = blocks[30100].copy()
+        first[20] = 91
+        first[21] = 0
+        calls = 0
+
+        async def read(address, count, slave):
+            nonlocal calls
+            if address == 30100:
+                calls += 1
+                return first if calls == 1 else None
+            return blocks[address]
+
+        self.coordinator.safe_read = AsyncMock(side_effect=read)
+        data = await self.coordinator._async_update_data()
+        self.assertEqual(calls, 2)
+        for key in ("pv1_current", "pv1_power", "pv2_voltage", "pv2_power"):
+            self.assertNotIn(key, data)
+        self.assertEqual(data["pv1_voltage"], 215.0)
+        self.assertAlmostEqual(data["pv2_current"], 4.1)
+        self.assertEqual(data["ac_total_power"], 3000)
+
+    async def test_two_consistent_pv_changes_are_accepted(self):
+        blocks = valid_blocks()
+        self.coordinator._transition_guard.remember({"pv1_current": 2.3})
+        unusual = blocks[30100].copy()
+        unusual[20] = 91
+        blocks[30100] = unusual
+        calls = 0
+
+        async def read(address, count, slave):
+            nonlocal calls
+            if address == 30100:
+                calls += 1
+            return blocks[address]
+
+        self.coordinator.safe_read = AsyncMock(side_effect=read)
+        data = await self.coordinator._async_update_data()
+        self.assertEqual(calls, 2)
+        self.assertEqual(data["pv1_current"], 9.1)
+        self.assertEqual(data["pv1_power"], 3640.0)
 
     async def test_normal_read_has_no_extra_temporal_retry(self):
         calls = self.setup_blocks(351, 352)

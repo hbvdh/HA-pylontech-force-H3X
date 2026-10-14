@@ -11,6 +11,10 @@ _LOGGER = logging.getLogger(__name__)
 
 INVERTER_POWER_LIMIT = 30_000
 PV_POWER_LIMIT = 40_000
+# Conservative maximum for the PV Total Power sensor in this fork. Keep
+# the existing wider string-power and lifetime counter sanity limits separate.
+# Systems with more than 10 kW of actual PV must raise this threshold.
+PV_TOTAL_POWER_LIMIT = 10_000
 # The CT measures the whole installation, not just the inverter output.
 GRID_POWER_LIMIT = 1_000_000
 # Grid lifetime counters need a tighter limit than instantaneous CT readings.
@@ -27,7 +31,7 @@ VALUE_RANGES = {
     "battery_power": (-INVERTER_POWER_LIMIT, INVERTER_POWER_LIMIT),
     "eps_power": (-INVERTER_POWER_LIMIT, INVERTER_POWER_LIMIT),
     "grid_total_power": (-GRID_POWER_LIMIT, GRID_POWER_LIMIT),
-    "pv_total_power": (0, PV_POWER_LIMIT),
+    "pv_total_power": (0, PV_TOTAL_POWER_LIMIT),
     "battery_voltage": (0, 1000),
     "bms_voltage": (0, 1000),
     "battery_current": (-100, 100),
