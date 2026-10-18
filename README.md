@@ -135,20 +135,28 @@ Feel free to open an issue on this repository if you encounter any bugs!
 
 ## Language / Taal
 
-This integration provides **English (en)** and **Dutch (nl)** translations through
-Home Assistant's native localization support. It uses the language selected in
-each user's Home Assistant profile; Home Assistant handles its own browser-language
-preference and falls back to English when no translation is available.
+This integration includes **English (en)** and **Dutch (nl)** translation files for
+connection dialogs and entity display names. Home Assistant uses two distinct
+language settings:
 
-Entity display names, the connection form, and its errors are translated. The EMS
-mode option values are deliberately kept unchanged (English), to avoid breaking
-existing automations and service calls. Existing unique IDs, entity IDs, Modbus
-registers, register values and statistics remain unchanged. Existing customized
-entity names are not overwritten, and previously registered default names may
-require review in **Settings → Devices & services → Entities** before a new
-translation becomes visible.
+- The **user profile language** controls the Home Assistant user interface and
+  translated config dialogs.
+- The **system/backend language** (Settings → System → General) determines the
+  original names of entities **when they are first registered**. Existing entity
+  names are not automatically renamed when either language changes. Users with
+  different UI languages can therefore see the same stored entity names.
 
-**Nederlands:** Kies Nederlands in je Home Assistant-gebruikersprofiel om de
-Nederlandse namen en configuratieteksten te zien. Kies Engels voor de Engelse
-versie. Er is geen afzonderlijke taalinstelling in de integratie nodig: zo
-kunnen verschillende gebruikers hun eigen taal kiezen.
+**Important:** This PR does not introduce a separate Auto / NL / EN options flow.
+It also does **not** translate literal runtime states like `Charging`, `Discharging`,
+and `Sleep`, or the raw EMS select options; their existing values are retained
+to protect automations and consumers. All existing unique IDs, entity IDs,
+Modbus registers, readings and energy statistics remain unchanged.
+
+For already registered entities, changing only their display names in the Home
+Assistant entity editor is safe for entity IDs and automations. Avoid deleting
+or recreating entities in a production setup to test language translations.
+
+**Nederlands:** De taal van je gebruikersprofiel vertaalt het HA-menu en
+configuratievensters. Bestaande sensornamen worden hierdoor niet hernoemd:
+daarvoor gebruikt Home Assistant de systeemtaal op het moment dat een entiteit
+voor het eerst wordt aangemaakt. De statuswaarden blijven voorlopig Engels.
