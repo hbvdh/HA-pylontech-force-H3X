@@ -1,0 +1,21 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Verbinden met Pylontech Force H3X",
+        "description": "Voer de Modbus TCP-verbindingsgegevens van je omvormer in.",
+        "data": {
+          "host": "Host (IP-adres)",
+          "port": "Poort"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Kan geen verbinding maken met de omvormer.",
+      "unknown": "Er is een onverwachte fout opgetreden."
+    },
+    "abort": {
+      "already_configured": "Dit apparaat is al geconfigureerd."
+    }
+  }
+}

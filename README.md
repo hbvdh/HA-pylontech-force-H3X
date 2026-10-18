@@ -132,3 +132,18 @@ Feel free to open an issue on this repository if you encounter any bugs!
 
 ---
 *Disclaimer: This is a community-built integration and is not officially affiliated with or endorsed by Pylontech.*
+
+## Language / Taal
+
+The integration's connection/setup dialog supports **English** and **Dutch** using
+Home Assistant's built-in translations. Its dialogs follow the **language of your
+Home Assistant user profile** (and Home Assistant's fallback), without a separate
+language selector.
+
+Sensor and control names, EMS mode choices, and inverter/battery state values are
+intentionally left unchanged in English. No entity IDs, unique IDs, Modbus
+registers or runtime logic are modified.
+
+**Nederlands:** De verbindingsvensters volgen de taal van je Home
+Assistant-gebruikersprofiel. Sensornamen, bediening en statuswaarden blijven
+Engels, zodat bestaande automatiseringen blijven werken.
