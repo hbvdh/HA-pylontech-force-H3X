@@ -26,6 +26,7 @@ class PylontechNumberEntityDescription(NumberEntityDescription):
 NUMBER_TYPES: tuple[PylontechNumberEntityDescription, ...] = (
     PylontechNumberEntityDescription(
         key="charge_discharge_power",
+        translation_key="charge_discharge_power",
         name="Charge/Discharge Power Ref",
         icon="mdi:swap-vertical-bold",
         native_unit_of_measurement=PERCENTAGE,
@@ -39,6 +40,7 @@ NUMBER_TYPES: tuple[PylontechNumberEntityDescription, ...] = (
     ),
     PylontechNumberEntityDescription(
         key="charge_limit_soc",
+        translation_key="charge_limit_soc",
         name="Charge Limit SOC",
         icon="mdi:battery-arrow-up",
         native_unit_of_measurement=PERCENTAGE,
@@ -51,6 +53,7 @@ NUMBER_TYPES: tuple[PylontechNumberEntityDescription, ...] = (
     ),
     PylontechNumberEntityDescription(
         key="discharge_limit_soc",
+        translation_key="discharge_limit_soc",
         name="Discharge Limit SOC (EPS)",
         icon="mdi:battery-arrow-down",
         native_unit_of_measurement=PERCENTAGE,
@@ -63,6 +66,7 @@ NUMBER_TYPES: tuple[PylontechNumberEntityDescription, ...] = (
     ),
     PylontechNumberEntityDescription(
         key="meter_export_power_max",
+        translation_key="meter_export_power_max",
         name="Meter max Power (Export)",
         icon="mdi:transmission-tower-export",
         native_unit_of_measurement="W",

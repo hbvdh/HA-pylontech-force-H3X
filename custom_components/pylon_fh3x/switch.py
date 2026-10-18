@@ -19,6 +19,7 @@ class PylontechSwitchEntityDescription(SwitchEntityDescription):
 SWITCH_TYPES: tuple[PylontechSwitchEntityDescription, ...] = (
     PylontechSwitchEntityDescription(
         key="heat_pump",
+        translation_key="heat_pump",
         name="Heat Pump",
         icon="mdi:heat-pump",
         register_address=40848,
@@ -26,6 +27,7 @@ SWITCH_TYPES: tuple[PylontechSwitchEntityDescription, ...] = (
     ),
     PylontechSwitchEntityDescription(
         key="period_1",
+        translation_key="period_1",
         name="Period 1",
         icon="mdi:calendar-clock",
         register_address=40908,
@@ -33,6 +35,7 @@ SWITCH_TYPES: tuple[PylontechSwitchEntityDescription, ...] = (
     ),
     PylontechSwitchEntityDescription(
         key="period_2",
+        translation_key="period_2",
         name="Period 2",
         icon="mdi:calendar-clock",
         register_address=40914,
@@ -40,6 +43,7 @@ SWITCH_TYPES: tuple[PylontechSwitchEntityDescription, ...] = (
     ),
     PylontechSwitchEntityDescription(
         key="period_3",
+        translation_key="period_3",
         name="Period 3",
         icon="mdi:calendar-clock",
         register_address=40920,
@@ -47,6 +51,7 @@ SWITCH_TYPES: tuple[PylontechSwitchEntityDescription, ...] = (
     ),
     PylontechSwitchEntityDescription(
         key="period_4",
+        translation_key="period_4",
         name="Period 4",
         icon="mdi:calendar-clock",
         register_address=40926,

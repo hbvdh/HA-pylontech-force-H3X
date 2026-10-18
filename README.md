@@ -132,3 +132,23 @@ Feel free to open an issue on this repository if you encounter any bugs!
 
 ---
 *Disclaimer: This is a community-built integration and is not officially affiliated with or endorsed by Pylontech.*
+
+## Language / Taal
+
+This integration provides **English (en)** and **Dutch (nl)** translations through
+Home Assistant's native localization support. It uses the language selected in
+each user's Home Assistant profile; Home Assistant handles its own browser-language
+preference and falls back to English when no translation is available.
+
+Entity display names, the connection form, and its errors are translated. The EMS
+mode option values are deliberately kept unchanged (English), to avoid breaking
+existing automations and service calls. Existing unique IDs, entity IDs, Modbus
+registers, register values and statistics remain unchanged. Existing customized
+entity names are not overwritten, and previously registered default names may
+require review in **Settings → Devices & services → Entities** before a new
+translation becomes visible.
+
+**Nederlands:** Kies Nederlands in je Home Assistant-gebruikersprofiel om de
+Nederlandse namen en configuratieteksten te zien. Kies Engels voor de Engelse
+versie. Er is geen afzonderlijke taalinstelling in de integratie nodig: zo
+kunnen verschillende gebruikers hun eigen taal kiezen.

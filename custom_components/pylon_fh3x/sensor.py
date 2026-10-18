@@ -28,60 +28,62 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
     # --- Status Sensoren ---
     SensorEntityDescription(
         key="inverter_status",
+        translation_key="inverter_status",
         name="Inverter Status",
         icon="mdi:information-outline",
     ),
     SensorEntityDescription(
         key="battery_status",
+        translation_key="battery_status",
         name="Battery Status",
         icon="mdi:battery-information",
     ),
 
     # --- PV (Zonnepanelen) ---
     SensorEntityDescription(
-        key="pv1_voltage", name="PV1 Voltage",
+        key="pv1_voltage", translation_key="pv1_voltage", name="PV1 Voltage",
         native_unit_of_measurement=UnitOfElectricPotential.VOLT,
         device_class=SensorDeviceClass.VOLTAGE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="pv1_current", name="PV1 Current",
+        key="pv1_current", translation_key="pv1_current", name="PV1 Current",
         native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
         device_class=SensorDeviceClass.CURRENT,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="pv2_voltage", name="PV2 Voltage",
+        key="pv2_voltage", translation_key="pv2_voltage", name="PV2 Voltage",
         native_unit_of_measurement=UnitOfElectricPotential.VOLT,
         device_class=SensorDeviceClass.VOLTAGE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="pv2_current", name="PV2 Current",
+        key="pv2_current", translation_key="pv2_current", name="PV2 Current",
         native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
         device_class=SensorDeviceClass.CURRENT,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="pv3_voltage", name="PV3 Voltage",
+        key="pv3_voltage", translation_key="pv3_voltage", name="PV3 Voltage",
         native_unit_of_measurement=UnitOfElectricPotential.VOLT,
         device_class=SensorDeviceClass.VOLTAGE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="pv3_current", name="PV3 Current",
+        key="pv3_current", translation_key="pv3_current", name="PV3 Current",
         native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
         device_class=SensorDeviceClass.CURRENT,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="pv_total_power", name="PV Total Power",
+        key="pv_total_power", translation_key="pv_total_power", name="PV Total Power",
         native_unit_of_measurement=UnitOfPower.WATT,
         device_class=SensorDeviceClass.POWER,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="pv_total_energy", name="PV Total Energy",
+        key="pv_total_energy", translation_key="pv_total_energy", name="PV Total Energy",
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
         state_class=SensorStateClass.TOTAL_INCREASING,
@@ -89,19 +91,19 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
 
     #pv power
     SensorEntityDescription(
-        key="pv1_power", name="PV1 Power",
+        key="pv1_power", translation_key="pv1_power", name="PV1 Power",
         native_unit_of_measurement=UnitOfPower.WATT,
         device_class=SensorDeviceClass.POWER,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="pv2_power", name="PV2 Power",
+        key="pv2_power", translation_key="pv2_power", name="PV2 Power",
         native_unit_of_measurement=UnitOfPower.WATT,
         device_class=SensorDeviceClass.POWER,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="pv3_power", name="PV3 Power",
+        key="pv3_power", translation_key="pv3_power", name="PV3 Power",
         native_unit_of_measurement=UnitOfPower.WATT,
         device_class=SensorDeviceClass.POWER,
         state_class=SensorStateClass.MEASUREMENT,
@@ -109,109 +111,109 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
 
     # --- Power & Net ---
     SensorEntityDescription(
-        key="ac_total_power", name="AC Total Power",
+        key="ac_total_power", translation_key="ac_total_power", name="AC Total Power",
         native_unit_of_measurement=UnitOfPower.WATT,
         device_class=SensorDeviceClass.POWER,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="grid_total_power", name="Grid Total Power",
+        key="grid_total_power", translation_key="grid_total_power", name="Grid Total Power",
         native_unit_of_measurement=UnitOfPower.WATT,
         device_class=SensorDeviceClass.POWER,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="load_power", name="Load Power",
+        key="load_power", translation_key="load_power", name="Load Power",
         native_unit_of_measurement=UnitOfPower.WATT,
         device_class=SensorDeviceClass.POWER,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="total_grid_import", name="Total Grid Import",
+        key="total_grid_import", translation_key="total_grid_import", name="Total Grid Import",
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
         state_class=SensorStateClass.TOTAL_INCREASING,
     ),
     SensorEntityDescription(
-        key="total_grid_export", name="Total Grid Export",
+        key="total_grid_export", translation_key="total_grid_export", name="Total Grid Export",
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
         state_class=SensorStateClass.TOTAL_INCREASING,
     ),
     SensorEntityDescription(
-        key="grid_voltage_r", name="Grid Voltage R",
+        key="grid_voltage_r", translation_key="grid_voltage_r", name="Grid Voltage R",
         native_unit_of_measurement=UnitOfElectricPotential.VOLT,
         device_class=SensorDeviceClass.VOLTAGE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="grid_voltage_s", name="Grid Voltage S",
+        key="grid_voltage_s", translation_key="grid_voltage_s", name="Grid Voltage S",
         native_unit_of_measurement=UnitOfElectricPotential.VOLT,
         device_class=SensorDeviceClass.VOLTAGE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="grid_voltage_t", name="Grid Voltage T",
+        key="grid_voltage_t", translation_key="grid_voltage_t", name="Grid Voltage T",
         native_unit_of_measurement=UnitOfElectricPotential.VOLT,
         device_class=SensorDeviceClass.VOLTAGE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="grid_current_r", name="Grid Current R",
+        key="grid_current_r", translation_key="grid_current_r", name="Grid Current R",
         native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
         device_class=SensorDeviceClass.CURRENT,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="grid_current_s", name="Grid Current S",
+        key="grid_current_s", translation_key="grid_current_s", name="Grid Current S",
         native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
         device_class=SensorDeviceClass.CURRENT,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="grid_current_t", name="Grid Current T",
+        key="grid_current_t", translation_key="grid_current_t", name="Grid Current T",
         native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
         device_class=SensorDeviceClass.CURRENT,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="grid_power_r", name="Grid Power R",
+        key="grid_power_r", translation_key="grid_power_r", name="Grid Power R",
         native_unit_of_measurement=UnitOfApparentPower.VOLT_AMPERE,
         device_class=SensorDeviceClass.APPARENT_POWER,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="grid_power_s", name="Grid Power S",
+        key="grid_power_s", translation_key="grid_power_s", name="Grid Power S",
         native_unit_of_measurement=UnitOfApparentPower.VOLT_AMPERE,
         device_class=SensorDeviceClass.APPARENT_POWER,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="grid_power_t", name="Grid Power T",
+        key="grid_power_t", translation_key="grid_power_t", name="Grid Power T",
         native_unit_of_measurement=UnitOfApparentPower.VOLT_AMPERE,
         device_class=SensorDeviceClass.APPARENT_POWER,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="load_power_r", name="Load Power R",
+        key="load_power_r", translation_key="load_power_r", name="Load Power R",
         native_unit_of_measurement=UnitOfApparentPower.VOLT_AMPERE,
         device_class=SensorDeviceClass.APPARENT_POWER,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="load_power_s", name="Load Power S",
+        key="load_power_s", translation_key="load_power_s", name="Load Power S",
         native_unit_of_measurement=UnitOfApparentPower.VOLT_AMPERE,
         device_class=SensorDeviceClass.APPARENT_POWER,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="load_power_t", name="Load Power T",
+        key="load_power_t", translation_key="load_power_t", name="Load Power T",
         native_unit_of_measurement=UnitOfApparentPower.VOLT_AMPERE,
         device_class=SensorDeviceClass.APPARENT_POWER,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="ac_frequency", name="AC Frequency",
+        key="ac_frequency", translation_key="ac_frequency", name="AC Frequency",
         native_unit_of_measurement=UnitOfFrequency.HERTZ,
         device_class=SensorDeviceClass.FREQUENCY,
         state_class=SensorStateClass.MEASUREMENT,
@@ -219,37 +221,37 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
 
     # --- Batterij (Omvormer registers) ---
     SensorEntityDescription(
-        key="battery_power", name="Battery Power",
+        key="battery_power", translation_key="battery_power", name="Battery Power",
         native_unit_of_measurement=UnitOfPower.WATT,
         device_class=SensorDeviceClass.POWER,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="battery_voltage", name="Battery Voltage",
+        key="battery_voltage", translation_key="battery_voltage", name="Battery Voltage",
         native_unit_of_measurement=UnitOfElectricPotential.VOLT,
         device_class=SensorDeviceClass.VOLTAGE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="battery_current", name="Battery Current",
+        key="battery_current", translation_key="battery_current", name="Battery Current",
         native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
         device_class=SensorDeviceClass.CURRENT,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="battery_soc", name="Battery SOC",
+        key="battery_soc", translation_key="battery_soc", name="Battery SOC",
         native_unit_of_measurement=PERCENTAGE,
         device_class=SensorDeviceClass.BATTERY,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="total_battery_charge", name="Total Battery Charge",
+        key="total_battery_charge", translation_key="total_battery_charge", name="Total Battery Charge",
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
         state_class=SensorStateClass.TOTAL_INCREASING,
     ),
     SensorEntityDescription(
-        key="total_battery_discharge", name="Total Battery Discharge",
+        key="total_battery_discharge", translation_key="total_battery_discharge", name="Total Battery Discharge",
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
         state_class=SensorStateClass.TOTAL_INCREASING,
@@ -257,42 +259,42 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
 
     # --- BMS Registers ---
     SensorEntityDescription(
-        key="bms_voltage", name="BMS Voltage",
+        key="bms_voltage", translation_key="bms_voltage", name="BMS Voltage",
         native_unit_of_measurement=UnitOfElectricPotential.VOLT,
         device_class=SensorDeviceClass.VOLTAGE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="bms_temperature", name="BMS Temperature",
+        key="bms_temperature", translation_key="bms_temperature", name="BMS Temperature",
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         device_class=SensorDeviceClass.TEMPERATURE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="bms_soc", name="BMS SOC",
+        key="bms_soc", translation_key="bms_soc", name="BMS SOC",
         native_unit_of_measurement=PERCENTAGE,
         device_class=SensorDeviceClass.BATTERY,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="bms_soh", name="BMS SOH",
+        key="bms_soh", translation_key="bms_soh", name="BMS SOH",
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:battery-heart-variant",
     ),
     SensorEntityDescription(
-        key="bms_cycles", name="BMS Cycles",
+        key="bms_cycles", translation_key="bms_cycles", name="BMS Cycles",
         state_class=SensorStateClass.TOTAL_INCREASING,
         icon="mdi:battery-sync",
     ),
     SensorEntityDescription(
-        key="bms_cell_voltage_max", name="BMS Cell Voltage Max",
+        key="bms_cell_voltage_max", translation_key="bms_cell_voltage_max", name="BMS Cell Voltage Max",
         native_unit_of_measurement=UnitOfElectricPotential.VOLT,
         device_class=SensorDeviceClass.VOLTAGE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SensorEntityDescription(
-        key="bms_cell_voltage_min", name="BMS Cell Voltage Min",
+        key="bms_cell_voltage_min", translation_key="bms_cell_voltage_min", name="BMS Cell Voltage Min",
         native_unit_of_measurement=UnitOfElectricPotential.VOLT,
         device_class=SensorDeviceClass.VOLTAGE,
         state_class=SensorStateClass.MEASUREMENT,
@@ -300,14 +302,14 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
     
     # --- Omvormer Algemeen ---
     SensorEntityDescription(
-        key="inverter_temperature", name="Inverter Temperature",
+        key="inverter_temperature", translation_key="inverter_temperature", name="Inverter Temperature",
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         device_class=SensorDeviceClass.TEMPERATURE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
 
     SensorEntityDescription(
-        key="heatsink_temperature", name="Heatsink Temperature",
+        key="heatsink_temperature", translation_key="heatsink_temperature", name="Heatsink Temperature",
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         device_class=SensorDeviceClass.TEMPERATURE,
         state_class=SensorStateClass.MEASUREMENT,

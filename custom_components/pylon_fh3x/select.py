@@ -32,6 +32,7 @@ class PylontechSelectEntityDescription(SelectEntityDescription):
 SELECT_TYPES: tuple[PylontechSelectEntityDescription, ...] = (
     PylontechSelectEntityDescription(
         key="ems_mode",
+        translation_key="ems_mode",
         name="EMS Mode",
         icon="mdi:state-machine",
         register_address=40907,

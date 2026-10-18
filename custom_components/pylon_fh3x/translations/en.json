@@ -17,5 +17,183 @@
     "abort": {
       "already_configured": "Device is already configured."
     }
+  },
+  "entity": {
+    "sensor": {
+      "inverter_status": {
+        "name": "Inverter Status"
+      },
+      "battery_status": {
+        "name": "Battery Status"
+      },
+      "pv1_voltage": {
+        "name": "PV1 Voltage"
+      },
+      "pv1_current": {
+        "name": "PV1 Current"
+      },
+      "pv2_voltage": {
+        "name": "PV2 Voltage"
+      },
+      "pv2_current": {
+        "name": "PV2 Current"
+      },
+      "pv3_voltage": {
+        "name": "PV3 Voltage"
+      },
+      "pv3_current": {
+        "name": "PV3 Current"
+      },
+      "pv_total_power": {
+        "name": "PV Total Power"
+      },
+      "pv_total_energy": {
+        "name": "PV Total Energy"
+      },
+      "pv1_power": {
+        "name": "PV1 Power"
+      },
+      "pv2_power": {
+        "name": "PV2 Power"
+      },
+      "pv3_power": {
+        "name": "PV3 Power"
+      },
+      "ac_total_power": {
+        "name": "AC Total Power"
+      },
+      "grid_total_power": {
+        "name": "Grid Total Power"
+      },
+      "load_power": {
+        "name": "Load Power"
+      },
+      "total_grid_import": {
+        "name": "Total Grid Import"
+      },
+      "total_grid_export": {
+        "name": "Total Grid Export"
+      },
+      "grid_voltage_r": {
+        "name": "Grid Voltage R"
+      },
+      "grid_voltage_s": {
+        "name": "Grid Voltage S"
+      },
+      "grid_voltage_t": {
+        "name": "Grid Voltage T"
+      },
+      "grid_current_r": {
+        "name": "Grid Current R"
+      },
+      "grid_current_s": {
+        "name": "Grid Current S"
+      },
+      "grid_current_t": {
+        "name": "Grid Current T"
+      },
+      "grid_power_r": {
+        "name": "Grid Power R"
+      },
+      "grid_power_s": {
+        "name": "Grid Power S"
+      },
+      "grid_power_t": {
+        "name": "Grid Power T"
+      },
+      "load_power_r": {
+        "name": "Load Power R"
+      },
+      "load_power_s": {
+        "name": "Load Power S"
+      },
+      "load_power_t": {
+        "name": "Load Power T"
+      },
+      "ac_frequency": {
+        "name": "AC Frequency"
+      },
+      "battery_power": {
+        "name": "Battery Power"
+      },
+      "battery_voltage": {
+        "name": "Battery Voltage"
+      },
+      "battery_current": {
+        "name": "Battery Current"
+      },
+      "battery_soc": {
+        "name": "Battery SOC"
+      },
+      "total_battery_charge": {
+        "name": "Total Battery Charge"
+      },
+      "total_battery_discharge": {
+        "name": "Total Battery Discharge"
+      },
+      "bms_voltage": {
+        "name": "BMS Voltage"
+      },
+      "bms_temperature": {
+        "name": "BMS Temperature"
+      },
+      "bms_soc": {
+        "name": "BMS SOC"
+      },
+      "bms_soh": {
+        "name": "BMS SOH"
+      },
+      "bms_cycles": {
+        "name": "BMS Cycles"
+      },
+      "bms_cell_voltage_max": {
+        "name": "BMS Cell Voltage Max"
+      },
+      "bms_cell_voltage_min": {
+        "name": "BMS Cell Voltage Min"
+      },
+      "inverter_temperature": {
+        "name": "Inverter Temperature"
+      },
+      "heatsink_temperature": {
+        "name": "Heatsink Temperature"
+      }
+    },
+    "number": {
+      "charge_discharge_power": {
+        "name": "Charge/Discharge Power Ref"
+      },
+      "charge_limit_soc": {
+        "name": "Charge Limit SOC"
+      },
+      "discharge_limit_soc": {
+        "name": "Discharge Limit SOC (EPS)"
+      },
+      "meter_export_power_max": {
+        "name": "Meter max Power (Export)"
+      }
+    },
+    "select": {
+      "ems_mode": {
+        "name": "EMS Mode"
+      }
+    },
+    "switch": {
+      "heat_pump": {
+        "name": "Heat Pump"
+      },
+      "period_1": {
+        "name": "Period 1"
+      },
+      "period_2": {
+        "name": "Period 2"
+      },
+      "period_3": {
+        "name": "Period 3"
+      },
+      "period_4": {
+        "name": "Period 4"
+      }
+    }
   }
 }
