@@ -135,28 +135,15 @@ Feel free to open an issue on this repository if you encounter any bugs!
 
 ## Language / Taal
 
-This integration includes **English (en)** and **Dutch (nl)** translation files for
-connection dialogs and entity display names. Home Assistant uses two distinct
-language settings:
+The integration's connection/setup dialog supports **English** and **Dutch** using
+Home Assistant's built-in translations. Its dialogs follow the **language of your
+Home Assistant user profile** (and Home Assistant's fallback), without a separate
+language selector.
 
-- The **user profile language** controls the Home Assistant user interface and
-  translated config dialogs.
-- The **system/backend language** (Settings → System → General) determines the
-  original names of entities **when they are first registered**. Existing entity
-  names are not automatically renamed when either language changes. Users with
-  different UI languages can therefore see the same stored entity names.
+Sensor and control names, EMS mode choices, and inverter/battery state values are
+intentionally left unchanged in English. No entity IDs, unique IDs, Modbus
+registers or runtime logic are modified.
 
-**Important:** This PR does not introduce a separate Auto / NL / EN options flow.
-It also does **not** translate literal runtime states like `Charging`, `Discharging`,
-and `Sleep`, or the raw EMS select options; their existing values are retained
-to protect automations and consumers. All existing unique IDs, entity IDs,
-Modbus registers, readings and energy statistics remain unchanged.
-
-For already registered entities, changing only their display names in the Home
-Assistant entity editor is safe for entity IDs and automations. Avoid deleting
-or recreating entities in a production setup to test language translations.
-
-**Nederlands:** De taal van je gebruikersprofiel vertaalt het HA-menu en
-configuratievensters. Bestaande sensornamen worden hierdoor niet hernoemd:
-daarvoor gebruikt Home Assistant de systeemtaal op het moment dat een entiteit
-voor het eerst wordt aangemaakt. De statuswaarden blijven voorlopig Engels.
+**Nederlands:** De verbindingsvensters volgen de taal van je Home
+Assistant-gebruikersprofiel. Sensornamen, bediening en statuswaarden blijven
+Engels, zodat bestaande automatiseringen blijven werken.
