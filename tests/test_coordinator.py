@@ -98,6 +98,7 @@ def valid_blocks():
 class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.coordinator = coordinator_module.PylontechCoordinator(None, "test", 502)
+        self.coordinator.use_single_block_read = False
         self.blocks = valid_blocks()
         self.now = 0
         self.coordinator.client.read_holding_registers.side_effect = self.response

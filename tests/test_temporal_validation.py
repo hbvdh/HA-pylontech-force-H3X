@@ -67,6 +67,7 @@ class TemporalGuardUnitTests(unittest.TestCase):
 class TemporalCoordinatorTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.coordinator = coordinator_module.PylontechCoordinator(None, "test", 502)
+        self.coordinator.use_single_block_read = False
         self.coordinator._transition_guard.remember({
             "heatsink_temperature": 35.0,
             "inverter_temperature": 30.0,
