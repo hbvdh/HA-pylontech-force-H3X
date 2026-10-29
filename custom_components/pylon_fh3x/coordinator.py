@@ -173,13 +173,33 @@ class PylontechCoordinator(DataUpdateCoordinator):
 
         _LOGGER.warning(
             "Suspicious Modbus values at address %s (Slave %s): %s. "
-            "Reading register block again.",
-            address, slave, ", ".join(suspicious),
+            "Reading register block again on a fresh connection. "
+            "Raw registers (first read): %s",
+            address, slave, ", ".join(suspicious), list(registers),
         )
+
+        # Evidence/robustness: a suspicious reply may be a late or mixed-up
+        # response left on the TCP connection by the dongle. Re-read on a new
+        # connection so the second sample cannot share that contamination.
+        async with self._modbus_lock:
+            self.client.close()
+            self._last_modbus_slave = None
+        await asyncio.sleep(0.2)
 
         retry_registers = await self.safe_read(
             address, count, slave
         )
+        if retry_registers is not None:
+            changed = [
+                (i, a, b)
+                for i, (a, b) in enumerate(zip(registers, retry_registers))
+                if a != b
+            ]
+            _LOGGER.warning(
+                "Modbus re-read at address %s (Slave %s) differs in %s of %s "
+                "registers (index, first, second): %s",
+                address, slave, len(changed), count, changed[:20],
+            )
 
         if retry_registers is None:
             if unconfirmed is not None:
