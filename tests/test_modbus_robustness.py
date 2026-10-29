@@ -110,6 +110,7 @@ def normal_blocks():
 class ModbusRobustnessTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.coordinator = coordinator_module.PylontechCoordinator(None, "h3x.test", 502)
+        self.coordinator.use_single_block_read = False
         self.client = self.coordinator.client
         self.blocks = normal_blocks()
         self.client.read_holding_registers.side_effect = self._response_for_address

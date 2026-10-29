@@ -22,6 +22,23 @@ GRID_CURRENT_JUMP_RETRY_A = 50.0
 GRID_CURRENT_INITIAL_RETRY_A = 100.0
 GRID_CURRENT_RETRY_AGREEMENT_A = 10.0
 
+# One request for registers 30100-30191 instead of three separate ones
+# (30100/48, 30156/30, 30183/9). Fewer requests per poll means fewer chances
+# for the dongle to return a late or mixed-up reply, and all values in the
+# block come from the same moment. Falls back to the three small reads if the
+# device refuses the larger one.
+MAIN_BLOCK_ADDRESS = 30100
+MAIN_BLOCK_COUNT = 92
+MAIN_SLICE = slice(0, 48)        # 30100-30147
+BATTERY_SLICE = slice(56, 86)    # 30156-30185
+GRID_PHASE_SLICE = slice(83, 92) # 30183-30191
+SINGLE_BLOCK_MAX_FAILURES = 3
+
+_GRID_PHASE_KEYS = (
+    "grid_current_r", "grid_current_s", "grid_current_t",
+    "grid_power_r", "grid_power_s", "grid_power_t",
+)
+
 BATTERY_STATUS_MAP = {
     0: "Sleep",
     1: "Charging",
@@ -47,6 +64,52 @@ def get_32bit_int(regs, idx):
 
 def get_32bit_float(regs, idx):
     return struct.unpack('>f', struct.pack('>HH', regs[idx], regs[idx+1]))[0]
+
+
+def _decode_main_sample(regs):
+    return {
+        "ac_total_power": get_32bit_int(regs, 0),
+        "grid_total_power": get_32bit_int(regs, 8),
+        "pv1_voltage": get_16bit_uint(regs, 19) * 0.1,
+        "pv1_current": get_16bit_uint(regs, 20) * 0.1,
+        "pv2_voltage": get_16bit_uint(regs, 21) * 0.1,
+        "pv2_current": get_16bit_uint(regs, 22) * 0.1,
+        "pv3_voltage": get_16bit_uint(regs, 23) * 0.1,
+        "pv3_current": get_16bit_uint(regs, 24) * 0.1,
+        "pv_total_power": get_32bit_int(regs, 27),
+        "ac_frequency": get_16bit_uint(regs, 40) * 0.01,
+        "inverter_temperature": get_16bit_int(regs, 46) * 0.1,
+        "heatsink_temperature": get_16bit_int(regs, 47) * 0.1,
+    }
+
+
+def _decode_grid_phase_sample(regs):
+    return {
+        "grid_current_r": get_16bit_int(regs, 0) * 0.1,
+        "grid_current_s": get_16bit_int(regs, 1) * 0.1,
+        "grid_current_t": get_16bit_int(regs, 2) * 0.1,
+        "grid_power_r": get_32bit_int(regs, 3),
+        "grid_power_s": get_32bit_int(regs, 5),
+        "grid_power_t": get_32bit_int(regs, 7),
+    }
+
+
+def _decode_battery_sample(regs):
+    return {
+        "battery_power": get_32bit_int(regs, 6),
+        "battery_voltage": get_16bit_uint(regs, 8) * 0.1,
+        "battery_current": get_16bit_int(regs, 9) * 0.1,
+        "battery_soc": get_16bit_uint(regs, 26),
+    }
+
+
+def _decode_single_block_sample(regs):
+    """Decode the sanity-check values of the combined 30100-30191 block."""
+    return {
+        **_decode_main_sample(regs[MAIN_SLICE]),
+        **_decode_battery_sample(regs[BATTERY_SLICE]),
+        **_decode_grid_phase_sample(regs[GRID_PHASE_SLICE]),
+    }
 
 
 async def _modbus_read(client, address, count, target_id):
@@ -78,6 +141,8 @@ class PylontechCoordinator(DataUpdateCoordinator):
         self._modbus_lock = asyncio.Lock()
         self._last_modbus_slave = None
         self._last_valid_grid_currents = {}
+        self.use_single_block_read = True
+        self._single_block_failures = 0
         
         super().__init__(
             hass,
@@ -156,7 +221,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
         return suspicious
 
     async def _read_with_sanity_retry(
-        self, address, count, slave, decode, unconfirmed=None
+        self, address, count, slave, decode, unconfirmed=None, partial_ok=False
     ):
         """Retry a register block once if decoded values look implausible."""
         registers = await self.safe_read(address, count, slave)
@@ -216,6 +281,10 @@ class PylontechCoordinator(DataUpdateCoordinator):
                     "Skipping grid phase block %s: current jump could not be verified",
                     address,
                 )
+                if partial_ok and unconfirmed is not None:
+                    # Combined block: drop only the grid phase values.
+                    unconfirmed.update(_GRID_PHASE_KEYS)
+                    return registers
                 return None
             # The normal validator will reject any static out-of-range values.
             return registers
@@ -251,6 +320,9 @@ class PylontechCoordinator(DataUpdateCoordinator):
                         "%s (first=%s A, retry=%s A)",
                         address, key, first_values[key], retry_values[key],
                     )
+                    if partial_ok and unconfirmed is not None:
+                        unconfirmed.update(_GRID_PHASE_KEYS)
+                        continue
                     return None
 
         if still_suspicious:
@@ -334,27 +406,51 @@ class PylontechCoordinator(DataUpdateCoordinator):
             data = {}
             unconfirmed = set()
 
-            # Read frequently changing inverter data in two contiguous blocks.
-            r_inverter_main = await self._read_with_sanity_retry(
-                30100,
-                48,
-                2,
-                lambda regs: {
-                    "ac_total_power": get_32bit_int(regs, 0),
-                    "grid_total_power": get_32bit_int(regs, 8),
-                    "pv1_voltage": get_16bit_uint(regs, 19) * 0.1,
-                    "pv1_current": get_16bit_uint(regs, 20) * 0.1,
-                    "pv2_voltage": get_16bit_uint(regs, 21) * 0.1,
-                    "pv2_current": get_16bit_uint(regs, 22) * 0.1,
-                    "pv3_voltage": get_16bit_uint(regs, 23) * 0.1,
-                    "pv3_current": get_16bit_uint(regs, 24) * 0.1,
-                    "pv_total_power": get_32bit_int(regs, 27),
-                    "ac_frequency": get_16bit_uint(regs, 40) * 0.01,
-                    "inverter_temperature": get_16bit_int(regs, 46) * 0.1,
-                    "heatsink_temperature": get_16bit_int(regs, 47) * 0.1,
-                },
-                unconfirmed=unconfirmed,
-            )
+            r_inverter_main = r_grid_phases = r_inverter_battery = None
+            if self.use_single_block_read:
+                r_all = await self._read_with_sanity_retry(
+                    MAIN_BLOCK_ADDRESS,
+                    MAIN_BLOCK_COUNT,
+                    2,
+                    _decode_single_block_sample,
+                    unconfirmed=unconfirmed,
+                    partial_ok=True,
+                )
+                if r_all:
+                    self._single_block_failures = 0
+                    r_inverter_main = r_all[MAIN_SLICE]
+                    r_inverter_battery = r_all[BATTERY_SLICE]
+                    r_grid_phases = r_all[GRID_PHASE_SLICE]
+                else:
+                    self._single_block_failures += 1
+                    if self._single_block_failures >= SINGLE_BLOCK_MAX_FAILURES:
+                        self.use_single_block_read = False
+                        _LOGGER.warning(
+                            "Combined Modbus read of %s-%s failed %s times in a "
+                            "row; using the three smaller reads instead.",
+                            MAIN_BLOCK_ADDRESS,
+                            MAIN_BLOCK_ADDRESS + MAIN_BLOCK_COUNT - 1,
+                            self._single_block_failures,
+                        )
+                    else:
+                        _LOGGER.warning(
+                            "Combined Modbus read failed (%s/%s); using the "
+                            "smaller reads for this poll.",
+                            self._single_block_failures,
+                            SINGLE_BLOCK_MAX_FAILURES,
+                        )
+
+            if not self.use_single_block_read or r_inverter_main is None:
+                r_inverter_main = await self._read_with_sanity_retry(
+                    30100, 48, 2, _decode_main_sample, unconfirmed=unconfirmed,
+                )
+                r_grid_phases = await self._read_with_sanity_retry(
+                    30183, 9, 2, _decode_grid_phase_sample, unconfirmed=unconfirmed,
+                )
+                r_inverter_battery = await self._read_with_sanity_retry(
+                    30156, 30, 2, _decode_battery_sample, unconfirmed=unconfirmed,
+                )
+
             if r_inverter_main:
                 data["ac_total_power"] = get_32bit_int(r_inverter_main, 0)
                 data["grid_total_power"] = get_32bit_int(r_inverter_main, 8)
@@ -380,20 +476,6 @@ class PylontechCoordinator(DataUpdateCoordinator):
                 data["heatsink_temperature"] = get_16bit_int(r_inverter_main, 47) * 0.1
 
             # Per-phase grid current/power (CT clamp measurements at the grid connection).
-            r_grid_phases = await self._read_with_sanity_retry(
-                30183,
-                9,
-                2,
-                lambda regs: {
-                    "grid_current_r": get_16bit_int(regs, 0) * 0.1,
-                    "grid_current_s": get_16bit_int(regs, 1) * 0.1,
-                    "grid_current_t": get_16bit_int(regs, 2) * 0.1,
-                    "grid_power_r": get_32bit_int(regs, 3),
-                    "grid_power_s": get_32bit_int(regs, 5),
-                    "grid_power_t": get_32bit_int(regs, 7),
-                },
-                unconfirmed=unconfirmed,
-            )
             if r_grid_phases:
                 data["grid_current_r"] = get_16bit_int(r_grid_phases, 0) * 0.1
                 data["grid_current_s"] = get_16bit_int(r_grid_phases, 1) * 0.1
@@ -402,18 +484,6 @@ class PylontechCoordinator(DataUpdateCoordinator):
                 data["grid_power_s"] = get_32bit_int(r_grid_phases, 5)
                 data["grid_power_t"] = get_32bit_int(r_grid_phases, 7)
 
-            r_inverter_battery = await self._read_with_sanity_retry(
-                30156,
-                30,
-                2,
-                lambda regs: {
-                    "battery_power": get_32bit_int(regs, 6),
-                    "battery_voltage": get_16bit_uint(regs, 8) * 0.1,
-                    "battery_current": get_16bit_int(regs, 9) * 0.1,
-                    "battery_soc": get_16bit_uint(regs, 26),
-                },
-                unconfirmed=unconfirmed,
-            )
             if r_inverter_battery:
                 data["total_grid_import"] = get_32bit_float(r_inverter_battery, 0)
                 data["total_grid_export"] = get_32bit_float(r_inverter_battery, 2)
