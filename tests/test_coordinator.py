@@ -31,6 +31,7 @@ class FakeModbusClient:
 class CoordinatorStub:
     def __init__(self, *args, **kwargs):
         self.data = {}
+        self.update_interval = kwargs.get("update_interval")
 
 
 class UpdateFailed(Exception):

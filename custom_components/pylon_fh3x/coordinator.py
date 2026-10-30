@@ -34,6 +34,22 @@ BATTERY_SLICE = slice(56, 86)    # 30156-30185
 GRID_PHASE_SLICE = slice(83, 92) # 30183-30191
 SINGLE_BLOCK_MAX_FAILURES = 3
 
+# When the dongle stops answering, hammering it with reconnects does not help.
+# A poll in which this many reads failed (each already retried once) counts as
+# a bad poll; the rest of that poll is skipped, and after several bad polls in a
+# row the poll interval is lengthened until the dongle answers again.
+POLL_MAX_FAILED_READS = 3
+BACKOFF_AFTER_BAD_POLLS = 3
+BACKOFF_INTERVAL_S = 60
+
+# When the dongle stops answering, hammering it with reconnects does not help.
+# A poll in which this many reads failed (each already retried once) counts as
+# a bad poll; the rest of that poll is skipped, and after several bad polls in a
+# row the poll interval is lengthened until the dongle answers again.
+POLL_MAX_FAILED_READS = 3
+BACKOFF_AFTER_BAD_POLLS = 3
+BACKOFF_INTERVAL_S = 60
+
 _GRID_PHASE_KEYS = (
     "grid_current_r", "grid_current_s", "grid_current_t",
     "grid_power_r", "grid_power_s", "grid_power_t",
@@ -143,7 +159,10 @@ class PylontechCoordinator(DataUpdateCoordinator):
         self._last_valid_grid_currents = {}
         self.use_single_block_read = True
         self._single_block_failures = 0
-        
+        self._bad_polls = 0
+        self._failed_reads_this_poll = 0
+        self._in_poll = False
+
         super().__init__(
             hass,
             _LOGGER,
@@ -342,6 +361,9 @@ class PylontechCoordinator(DataUpdateCoordinator):
     
     async def safe_read(self, address, count, slave):
         """Read Modbus registers, retrying once after a failed response."""
+        if self._in_poll and self._failed_reads_this_poll >= POLL_MAX_FAILED_READS:
+            # The dongle is not answering; do not keep reconnecting this poll.
+            return None
         async with self._modbus_lock:
             for attempt in range(2):
                 try:
@@ -397,10 +419,55 @@ class PylontechCoordinator(DataUpdateCoordinator):
                         address, slave, error,
                     )
 
+            if self._in_poll:
+                self._failed_reads_this_poll += 1
             return None
 
 
     async def _async_update_data(self):
+        """Poll the inverter; back off when the dongle stops answering."""
+        self._failed_reads_this_poll = 0
+        self._in_poll = True
+        try:
+            data = await self._async_poll_once()
+        except UpdateFailed:
+            self._register_poll_result(bad=True)
+            raise
+        finally:
+            self._in_poll = False
+        self._register_poll_result(
+            bad=self._failed_reads_this_poll >= POLL_MAX_FAILED_READS,
+            healthy=self._failed_reads_this_poll == 0,
+        )
+        return data
+
+    def _register_poll_result(self, bad: bool, healthy: bool = False) -> None:
+        """Lengthen the poll interval after repeated bad polls; restore on recovery."""
+        if bad:
+            self._bad_polls += 1
+            if (
+                self._bad_polls >= BACKOFF_AFTER_BAD_POLLS
+                and self.update_interval != timedelta(seconds=BACKOFF_INTERVAL_S)
+            ):
+                self.update_interval = timedelta(seconds=BACKOFF_INTERVAL_S)
+                _LOGGER.warning(
+                    "The H3X has not answered for %s polls in a row; polling "
+                    "once every %s s until it responds again.",
+                    self._bad_polls, BACKOFF_INTERVAL_S,
+                )
+        elif healthy and (
+            self._bad_polls
+            or self.update_interval != timedelta(seconds=DEFAULT_SCAN_INTERVAL)
+        ):
+            self._bad_polls = 0
+            if self.update_interval != timedelta(seconds=DEFAULT_SCAN_INTERVAL):
+                self.update_interval = timedelta(seconds=DEFAULT_SCAN_INTERVAL)
+                _LOGGER.warning(
+                    "The H3X answers again; polling every %s s.",
+                    DEFAULT_SCAN_INTERVAL,
+                )
+
+    async def _async_poll_once(self):
         """Fetch data from the inverter via Modbus."""
         try:
             data = {}
