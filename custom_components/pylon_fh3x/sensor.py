@@ -16,10 +16,11 @@ from homeassistant.const import (
     UnitOfPower,
     UnitOfTemperature,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .cell_sensor import build_cell_entities
 from .const import DOMAIN, MANUFACTURER, MODEL
 
 # Hier definiëren we alle sensoren. De 'key' moet exact overeenkomen 
@@ -330,6 +331,24 @@ async def async_setup_entry(
     ]
 
     async_add_entities(entities)
+
+    # Module/cell sensors depend on the layout the BMS reports, so they are
+    # added as soon as the first successful cell read is available.
+    if coordinator.cell_data_enabled:
+        state = {"added": False}
+
+        @callback
+        def _add_cell_entities() -> None:
+            if state["added"]:
+                return
+            cell_entities = build_cell_entities(coordinator, entry)
+            if cell_entities:
+                state["added"] = True
+                async_add_entities(cell_entities)
+
+        _add_cell_entities()
+        if not state["added"]:
+            entry.async_on_unload(coordinator.async_add_listener(_add_cell_entities))
 
 
 class PylontechSensor(CoordinatorEntity, SensorEntity):

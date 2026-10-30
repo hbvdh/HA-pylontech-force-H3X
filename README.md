@@ -82,6 +82,18 @@ App remains the source of truth, and all schedule details must be configured in 
 
 ---
 
+## 🔋 Battery module and cell data (optional)
+
+Off by default. Enable it under **Settings → Devices & Services → Pylontech Force H3X → Configure → Read module and cell data**.
+
+Once a minute (separate from the fast poll) the BMS is asked for the voltage and temperature of every module and every cell. The number of modules and cells is read from the BMS itself.
+
+- Per module: voltage, temperature, lowest/highest/average cell voltage, cell voltage delta (mV) and lowest/highest cell temperature.
+- The *Cell Voltage Delta* sensor of each module has the full per-cell lists as attributes (`cell_voltages`, `cell_temperatures`, `cell_soc_estimate`) for use in dashboards.
+- Per-cell sensors exist too, but are disabled by default.
+- `cell_soc_estimate` is only an indication from a generic LFP voltage curve. The BMS reports no SOC per cell.
+- A read is rejected as a whole when a value is out of range or the cell minimum/maximum does not match the BMS header; the previous values are kept (and removed after 10 minutes without a good read).
+
 ## 🚀 Installation
 
 ### Option 1: Via HACS (Recommended)

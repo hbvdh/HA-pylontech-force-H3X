@@ -5,7 +5,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN, CONF_HOST, CONF_PORT
+from .const import DOMAIN, CONF_HOST, CONF_PORT, CONF_CELL_DATA
 from .coordinator import PylontechCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -23,6 +23,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Initialize the shared coordinator used by all entity platforms.
     coordinator = PylontechCoordinator(hass, host, port)
+    # Optional module/cell data from the BMS, off unless enabled in the options.
+    coordinator.cell_data_enabled = bool(entry.options.get(CONF_CELL_DATA, False))
 
     
     await coordinator.async_config_entry_first_refresh()
@@ -33,7 +35,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    # Reload when the options change so the cell sensors appear or disappear.
+    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
+
     return True
+
+
+async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload the integration after an options change."""
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

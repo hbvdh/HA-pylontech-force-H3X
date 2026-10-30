@@ -15,3 +15,4 @@ SCAN_INTERVAL = timedelta(seconds=DEFAULT_SCAN_INTERVAL)
 
 CONF_HOST = "host"
 CONF_PORT = "port"
+CONF_CELL_DATA = "cell_data"
