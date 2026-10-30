@@ -17,5 +17,16 @@
     "abort": {
       "already_configured": "Dit apparaat is al geconfigureerd."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Batterijmodule- en celdata",
+        "description": "Leest spanning en temperatuur per module en per cel uit de BMS, één keer per minuut.",
+        "data": {
+          "cell_data": "Module- en celdata uitlezen"
+        }
+      }
+    }
   }
 }

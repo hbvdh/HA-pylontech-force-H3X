@@ -3,6 +3,7 @@ import asyncio
 import logging
 import math
 import struct
+import time
 from datetime import timedelta
 
 from pymodbus.client import AsyncModbusTcpClient
@@ -14,6 +15,17 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .const import DOMAIN, DEFAULT_SCAN_INTERVAL
 from .validation import TelemetryValidator, VALUE_RANGES
 from .telemetry_guard import TelemetryTransitionGuard
+from .cell_data import (
+    BMS_PILE_ADDRESS,
+    CELL_TEMPERATURE_ADDRESS,
+    CELL_VOLTAGE_ADDRESS,
+    HEADER_COUNT,
+    MODULE_TEMPERATURE_ADDRESS,
+    MODULE_VOLTAGE_ADDRESS,
+    CellDataError,
+    decode_cell_data,
+    parse_layout,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,6 +45,12 @@ MAIN_SLICE = slice(0, 48)        # 30100-30147
 BATTERY_SLICE = slice(56, 86)    # 30156-30185
 GRID_PHASE_SLICE = slice(83, 92) # 30183-30191
 SINGLE_BLOCK_MAX_FAILURES = 3
+
+# Optional module/cell data from the BMS (slave 1). Read in its own, slower
+# round so a problem there can never delay or break the fast poll.
+CELL_POLL_INTERVAL_S = 60
+CELL_DATA_STALE_AFTER_S = 600
+CELL_READ_CHUNK = 100
 
 _GRID_PHASE_KEYS = (
     "grid_current_r", "grid_current_s", "grid_current_t",
@@ -143,7 +161,11 @@ class PylontechCoordinator(DataUpdateCoordinator):
         self._last_valid_grid_currents = {}
         self.use_single_block_read = True
         self._single_block_failures = 0
-        
+        self.cell_data_enabled = False
+        self._cell_data = None
+        self._cell_data_time = None
+        self._cell_next_poll = 0.0
+
         super().__init__(
             hass,
             _LOGGER,
@@ -400,6 +422,97 @@ class PylontechCoordinator(DataUpdateCoordinator):
             return None
 
 
+    @property
+    def cell_data(self):
+        """Latest validated module/cell data, or None when missing or stale."""
+        if self._cell_data is None or self._cell_data_time is None:
+            return None
+        if time.monotonic() - self._cell_data_time > CELL_DATA_STALE_AFTER_S:
+            return None
+        return self._cell_data
+
+    @property
+    def cell_data_age(self):
+        """Seconds since the cell data was last read successfully."""
+        if self._cell_data_time is None:
+            return None
+        return time.monotonic() - self._cell_data_time
+
+    async def _read_chunked(self, address, count, slave):
+        """Read a long register range in Modbus-safe pieces."""
+        registers = []
+        offset = 0
+        while offset < count:
+            part = min(CELL_READ_CHUNK, count - offset)
+            block = await self.safe_read(address + offset, part, slave)
+            if block is None:
+                return None
+            registers.extend(block)
+            offset += part
+        return registers
+
+    async def _read_cell_data_once(self):
+        """One full read of the module/cell registers; raises CellDataError."""
+        header = await self.safe_read(BMS_PILE_ADDRESS, HEADER_COUNT, 1)
+        if header is None:
+            return None
+        layout = parse_layout(header)
+        module_v = await self._read_chunked(MODULE_VOLTAGE_ADDRESS, layout.modules, 1)
+        module_t = await self._read_chunked(MODULE_TEMPERATURE_ADDRESS, layout.modules, 1)
+        cell_v = await self._read_chunked(CELL_VOLTAGE_ADDRESS, layout.cells, 1)
+        cell_t = await self._read_chunked(CELL_TEMPERATURE_ADDRESS, layout.cells, 1)
+        if None in (module_v, module_t, cell_v, cell_t):
+            return None
+        raw = {
+            "header": list(header),
+            "module_voltages": list(module_v),
+            "module_temperatures": list(module_t),
+            "cell_voltages": list(cell_v),
+            "cell_temperatures": list(cell_t),
+        }
+        try:
+            data, notes = decode_cell_data(
+                header, module_v, module_t, cell_v, cell_t
+            )
+        except CellDataError as err:
+            err.raw = raw
+            raise
+        for note in notes:
+            _LOGGER.debug("BMS cell data: %s", note)
+        return data
+
+    async def _async_update_cell_data(self):
+        """Refresh the module/cell data about once a minute; never raises."""
+        now = time.monotonic()
+        if now < self._cell_next_poll:
+            return
+        self._cell_next_poll = now + CELL_POLL_INTERVAL_S
+        try:
+            for attempt in range(2):
+                try:
+                    data = await self._read_cell_data_once()
+                except CellDataError as err:
+                    _LOGGER.warning(
+                        "Rejected BMS cell data (attempt %s of 2): %s. Raw registers: %s",
+                        attempt + 1, err, getattr(err, "raw", None),
+                    )
+                    data = None
+                if data is not None:
+                    self._cell_data = data
+                    self._cell_data_time = time.monotonic()
+                    return
+                if attempt == 0:
+                    # A bad or missing reply may be left over on the connection.
+                    async with self._modbus_lock:
+                        self.client.close()
+                        self._last_modbus_slave = None
+                    await asyncio.sleep(0.2)
+            _LOGGER.warning(
+                "BMS cell data could not be read; keeping the previous values."
+            )
+        except Exception as err:  # never let this break the fast poll
+            _LOGGER.warning("Unexpected error reading BMS cell data: %s", err)
+
     async def _async_update_data(self):
         """Fetch data from the inverter via Modbus."""
         try:
@@ -556,6 +669,9 @@ class PylontechCoordinator(DataUpdateCoordinator):
                 data["bms_cell_voltage_max"] = get_16bit_uint(r_bms, 13) * 0.001
                 data["bms_cell_voltage_min"] = get_16bit_uint(r_bms, 14) * 0.001
                 data["bms_soh"] = get_16bit_uint(r_bms, 29)
+
+            if self.cell_data_enabled:
+                await self._async_update_cell_data()
 
             # Drop just the unconfirmed fields; preserve all other readings.
             for key in unconfirmed:

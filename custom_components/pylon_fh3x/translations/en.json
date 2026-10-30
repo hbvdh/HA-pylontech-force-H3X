@@ -17,5 +17,16 @@
     "abort": {
       "already_configured": "Device is already configured."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Battery module and cell data",
+        "description": "Read voltage and temperature per module and per cell from the BMS, once a minute.",
+        "data": {
+          "cell_data": "Read module and cell data"
+        }
+      }
+    }
   }
 }

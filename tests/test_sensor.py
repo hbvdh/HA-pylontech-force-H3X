@@ -50,6 +50,7 @@ def load_sensor():
         setattr(constants, name, SimpleNamespace(**values))
     modules["homeassistant.config_entries"].ConfigEntry = object
     modules["homeassistant.core"].HomeAssistant = object
+    modules["homeassistant.core"].callback = lambda func: func
     modules["homeassistant.helpers.entity_platform"].AddEntitiesCallback = object
     modules["homeassistant.helpers.update_coordinator"].CoordinatorEntity = CoordinatorEntityStub
     modules["fh3x_sensor_test"].__path__ = [str(
@@ -81,3 +82,48 @@ class SensorTests(unittest.TestCase):
         self.assertIsNone(sensor.native_value)
         coordinator.data = {"total_grid_import": 2025.53}
         self.assertEqual(sensor.native_value, 2025.53)
+
+
+class CellSensorTests(unittest.TestCase):
+    def setUp(self):
+        self.platform = load_sensor()
+
+    def _data(self):
+        module = {
+            "number": 1, "voltage": 52.8, "temperature": 25.0,
+            "cell_voltages": [3.3, 3.31], "cell_temperatures": [25.0, 25.1],
+            "cell_soc_estimate": [50.0, 60.0], "cell_voltage_min": 3.3,
+            "cell_voltage_max": 3.31, "cell_voltage_avg": 3.305,
+            "cell_voltage_delta_mv": 10, "cell_temperature_min": 25.0,
+            "cell_temperature_max": 25.1,
+        }
+        return {"modules": [module], "module_count": 1, "cells_per_module": 2}
+
+    def test_entities_follow_layout_and_cells_are_disabled_by_default(self):
+        build = self.platform.build_cell_entities
+        entry = SimpleNamespace(data={"host": "test"}, entry_id="test", title="Test")
+        coordinator = SimpleNamespace(cell_data=self._data(), cell_data_age=12.4)
+        entities = build(coordinator, entry)
+        # 1 module * (8 module sensors + 2 cells * 2) = 12
+        self.assertEqual(len(entities), 12)
+        cells = [e for e in entities if "Cell 1 " in e._attr_name or "Cell 2 " in e._attr_name]
+        self.assertEqual(len(cells), 4)
+        self.assertTrue(all(e._attr_entity_registry_enabled_default is False for e in cells))
+        ids = [e._attr_unique_id for e in entities]
+        self.assertEqual(len(ids), len(set(ids)))
+
+    def test_values_attributes_and_unavailable_when_stale(self):
+        entry = SimpleNamespace(data={"host": "test"}, entry_id="test", title="Test")
+        coordinator = SimpleNamespace(cell_data=self._data(), cell_data_age=12.4)
+        entities = self.platform.build_cell_entities(coordinator, entry)
+        delta = next(e for e in entities if e._attr_unique_id.endswith("module_01_cell_voltage_delta_mv"))
+        self.assertEqual(delta.native_value, 10)
+        attrs = delta.extra_state_attributes
+        self.assertEqual(attrs["cell_voltages"], [3.3, 3.31])
+        self.assertEqual(attrs["seconds_since_read"], 12)
+        cell2 = next(e for e in entities if e._attr_unique_id.endswith("cell_02_voltage"))
+        self.assertEqual(cell2.native_value, 3.31)
+        coordinator.cell_data = None
+        self.assertFalse(delta.available)
+        self.assertIsNone(delta.native_value)
+        self.assertFalse(cell2.available)
