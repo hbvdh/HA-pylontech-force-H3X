@@ -43,6 +43,7 @@ class CoordinatorStub:
 
     def __init__(self, *args, **kwargs):
         self.data = {}
+        self.update_interval = kwargs.get("update_interval")
         self.refresh_calls = 0
         self.refresh_error = None
 
