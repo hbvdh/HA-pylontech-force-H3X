@@ -249,12 +249,14 @@ class PylontechCoordinator(DataUpdateCoordinator):
         if not suspicious:
             return registers
 
-        _LOGGER.warning(
-            "Suspicious Modbus values at address %s (Slave %s): %s. "
-            "Reading register block again on a fresh connection. "
-            "Raw registers (first read): %s",
-            address, slave, ", ".join(suspicious), list(registers),
-        )
+        def log_first_read(level):
+            _LOGGER.log(
+                level,
+                "Suspicious Modbus values at address %s (Slave %s): %s. "
+                "Reading register block again on a fresh connection. "
+                "Raw registers (first read): %s",
+                address, slave, ", ".join(suspicious), list(registers),
+            )
 
         # Evidence/robustness: a suspicious reply may be a late or mixed-up
         # response left on the TCP connection by the dongle. Re-read on a new
@@ -267,19 +269,9 @@ class PylontechCoordinator(DataUpdateCoordinator):
         retry_registers = await self.safe_read(
             address, count, slave
         )
-        if retry_registers is not None:
-            changed = [
-                (i, a, b)
-                for i, (a, b) in enumerate(zip(registers, retry_registers))
-                if a != b
-            ]
-            _LOGGER.warning(
-                "Modbus re-read at address %s (Slave %s) differs in %s of %s "
-                "registers (index, first, second): %s",
-                address, slave, len(changed), count, changed[:20],
-            )
 
         if retry_registers is None:
+            log_first_read(logging.WARNING)
             if unconfirmed is not None:
                 for key in first_transitions:
                     if self._transition_guard.should_suppress_unconfirmed(
@@ -302,12 +294,18 @@ class PylontechCoordinator(DataUpdateCoordinator):
             # The normal validator will reject any static out-of-range values.
             return registers
 
+        changed = [
+            (i, a, b)
+            for i, (a, b) in enumerate(zip(registers, retry_registers))
+            if a != b
+        ]
         retry_values = decode(retry_registers)
         still_suspicious = self._find_suspicious_values(retry_values)
         # A confirmed large change may be genuine. If repeat readings differ,
         # suppress ONLY the unconfirmed field, never the whole register block.
         # Temperatures rising rapidly are fail-open to preserve safety signals.
         second_transitions = self._transition_guard.suspicious(retry_values)
+        confirmed_changes = set()
         for key in first_transitions | second_transitions:
             if key not in retry_values:
                 continue
@@ -316,6 +314,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
             if key in first_transitions and self._transition_guard.confirmed(
                 key, first_values[key], retry_values[key]
             ):
+                confirmed_changes.add(key)
                 continue  # Two consistent samples confirm a real change.
             if unconfirmed is not None and self._transition_guard.should_suppress_unconfirmed(
                 key, retry_values[key]
@@ -325,6 +324,39 @@ class PylontechCoordinator(DataUpdateCoordinator):
                     "Ignoring unconfirmed temporal anomaly %s at %s (Slave %s)",
                     key, address, slave,
                 )
+        # A confirmed change (e.g. PV MPPT re-sweeping at dusk) is real
+        # telemetry, not a fault: report it once at INFO and keep the raw
+        # register evidence at DEBUG. Anything else keeps the full WARNINGs.
+        if (
+            confirmed_changes
+            and set(suspicious) <= confirmed_changes
+            and second_transitions <= confirmed_changes
+        ):
+            _LOGGER.info(
+                "Confirmed genuine change at address %s (Slave %s): %s",
+                address, slave, ", ".join(
+                    f"{key} {first_values[key]:g} -> {retry_values[key]:g}"
+                    for key in sorted(confirmed_changes)
+                ),
+            )
+            log_first_read(logging.DEBUG)
+            _LOGGER.debug(
+                "Modbus re-read at address %s (Slave %s) differs in %s of %s "
+                "registers (index, first, second): %s",
+                address, slave, len(changed), count, changed[:20],
+            )
+            return retry_registers
+
+        log_first_read(logging.WARNING)
+        _LOGGER.warning(
+            "Modbus re-read at address %s (Slave %s) differs in %s of %s "
+            "registers (index, first, second): %s",
+            address, slave, len(changed), count, changed[:20],
+        )
+        still_suspicious = [
+            key for key in still_suspicious if key not in confirmed_changes
+        ]
+
         for key in suspicious:
             if key.startswith("grid_current_") and key in still_suspicious:
                 if abs(retry_values[key] - first_values[key]) > GRID_CURRENT_RETRY_AGREEMENT_A:
