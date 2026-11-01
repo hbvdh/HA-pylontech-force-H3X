@@ -230,3 +230,59 @@ class TemporalCoordinatorTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConfirmedChangeLoggingTests(unittest.IsolatedAsyncioTestCase):
+    """PV MPPT re-sweeps at dusk are real jumps: log them once at INFO."""
+
+    def setUp(self):
+        self.coordinator = coordinator_module.PylontechCoordinator(None, "test", 502)
+        self.coordinator.use_single_block_read = False
+        self.coordinator._transition_guard.remember({"pv1_voltage": 75.0})
+
+    def setup_pv1(self, first_raw, retry_raw):
+        blocks = valid_blocks()
+        first = blocks[30100].copy()
+        first[19] = first_raw
+        retry = blocks[30100].copy()
+        retry[19] = retry_raw
+        calls = {30100: 0}
+
+        async def read(address, count, slave):
+            if address == 30100:
+                calls[30100] += 1
+                return first if calls[30100] == 1 else retry
+            return blocks[address]
+
+        self.coordinator.safe_read = AsyncMock(side_effect=read)
+        return calls
+
+    async def test_confirmed_pv_jump_is_info_not_warning(self):
+        calls = self.setup_pv1(1500, 1497)  # 75 V -> 150 V, retry agrees
+        with self.assertLogs(coordinator_module._LOGGER, level="DEBUG") as logs:
+            data = await self.coordinator._async_update_data()
+        self.assertEqual(calls[30100], 2)
+        self.assertAlmostEqual(data["pv1_voltage"], 149.7)
+        self.assertFalse([r for r in logs.records if r.levelname == "WARNING"], logs.output)
+        self.assertTrue(any(
+            r.levelname == "INFO" and "Confirmed genuine change" in r.getMessage()
+            and "pv1_voltage" in r.getMessage()
+            for r in logs.records
+        ), logs.output)
+        # Raw register evidence is still available at DEBUG.
+        self.assertTrue(any(
+            r.levelname == "DEBUG" and "Raw registers" in r.getMessage()
+            for r in logs.records
+        ), logs.output)
+
+    async def test_unconfirmed_pv_jump_still_warns(self):
+        calls = self.setup_pv1(1500, 1600)  # retries disagree by 10 V
+        with self.assertLogs(coordinator_module._LOGGER, level="WARNING") as logs:
+            data = await self.coordinator._async_update_data()
+        self.assertEqual(calls[30100], 2)
+        self.assertNotIn("pv1_voltage", data)
+        messages = [r.getMessage() for r in logs.records]
+        self.assertTrue(any("Raw registers (first read)" in m for m in messages), messages)
+        self.assertTrue(any("differs in" in m for m in messages), messages)
+        self.assertTrue(any("Ignoring unconfirmed temporal anomaly pv1_voltage" in m
+                            for m in messages), messages)
