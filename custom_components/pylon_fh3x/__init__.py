@@ -10,7 +10,9 @@ from .coordinator import PylontechCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.NUMBER, Platform.SELECT, Platform.SWITCH]
+PLATFORMS: list[Platform] = [
+    Platform.SENSOR, Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SELECT, Platform.SWITCH,
+]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -23,6 +25,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Initialize the shared coordinator used by all entity platforms.
     coordinator = PylontechCoordinator(hass, host, port)
+    # Lets the coordinator update the device registry (firmware, model).
+    coordinator.config_entry_ref = entry
 
     
     await coordinator.async_config_entry_first_refresh()

@@ -17,9 +17,12 @@ from homeassistant.const import (
     UnitOfTemperature,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.const import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .alarms import PCS_FAULTS, PCS_WARNINGS, active_issues, combined_bits, issues_state
+from .device import device_info
 from .const import DOMAIN, MANUFACTURER, MODEL
 
 # Hier definiëren we alle sensoren. De 'key' moet exact overeenkomen 
@@ -315,6 +318,96 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
 )
 
 
+# --- Optional reads: AC-coupled PV / third-party meter, codes, limits ---------
+OPTIONAL_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
+    SensorEntityDescription(
+        key="acc_power_total", name="AC Coupled PV Power",
+        native_unit_of_measurement=UnitOfPower.WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    *(
+        SensorEntityDescription(
+            key=f"acc_power_{phase}", name=f"AC Coupled PV Power {phase.upper()}",
+            native_unit_of_measurement=UnitOfPower.WATT,
+            device_class=SensorDeviceClass.POWER,
+            state_class=SensorStateClass.MEASUREMENT,
+            entity_registry_enabled_default=False,
+        )
+        for phase in "rst"
+    ),
+    SensorEntityDescription(
+        key="third_party_meter_power", name="Third Party Meter Power",
+        native_unit_of_measurement=UnitOfPower.WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    SensorEntityDescription(
+        key="third_party_meter_energy", name="Third Party Meter Energy",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+    ),
+    SensorEntityDescription(
+        key="grid_import_power_limit", name="Grid Import Power Limit",
+        native_unit_of_measurement=UnitOfPower.WATT,
+        device_class=SensorDeviceClass.POWER,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:transmission-tower-import",
+    ),
+    SensorEntityDescription(
+        key="fault_code", name="Fault Code",
+        entity_category=EntityCategory.DIAGNOSTIC, icon="mdi:alert-circle-outline",
+    ),
+    SensorEntityDescription(
+        key="warning_code", name="Warning Code",
+        entity_category=EntityCategory.DIAGNOSTIC, icon="mdi:alert-outline",
+    ),
+    SensorEntityDescription(
+        key="firmware_update_state", name="Firmware Update State",
+        entity_category=EntityCategory.DIAGNOSTIC, icon="mdi:update",
+    ),
+)
+
+# --- Static device information (read once at startup) ------------------------
+IDENTITY_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
+    SensorEntityDescription(
+        key="pcs_software_version", name="PCS Software Version",
+        entity_category=EntityCategory.DIAGNOSTIC, icon="mdi:chip",
+    ),
+    SensorEntityDescription(
+        key="pcs_afci_firmware_version", name="AFCI Firmware Version",
+        entity_category=EntityCategory.DIAGNOSTIC, icon="mdi:chip",
+    ),
+    SensorEntityDescription(
+        key="bms_main_version", name="BMS Main Version",
+        entity_category=EntityCategory.DIAGNOSTIC, icon="mdi:chip",
+    ),
+    SensorEntityDescription(
+        key="bms_hmi_version", name="BMS HMI Version",
+        entity_category=EntityCategory.DIAGNOSTIC, icon="mdi:chip",
+    ),
+    SensorEntityDescription(
+        key="pcs_max_output_power", name="PCS Max Output Power",
+        native_unit_of_measurement=UnitOfPower.WATT,
+        device_class=SensorDeviceClass.POWER,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+)
+
+# --- Decoded fault / warning bits ------------------------------------------------
+ISSUE_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
+    SensorEntityDescription(
+        key="fault_bits", name="Inverter Faults",
+        entity_category=EntityCategory.DIAGNOSTIC, icon="mdi:alert-circle",
+    ),
+    SensorEntityDescription(
+        key="warning_bits", name="Inverter Warnings",
+        entity_category=EntityCategory.DIAGNOSTIC, icon="mdi:alert",
+    ),
+)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -326,7 +419,15 @@ async def async_setup_entry(
     # Maak voor elke definitie hierboven een PylontechSensor object aan
     entities = [
         PylontechSensor(coordinator, description, entry)
-        for description in SENSOR_TYPES
+        for description in SENSOR_TYPES + OPTIONAL_SENSOR_TYPES
+    ]
+    entities += [
+        PylontechIdentitySensor(coordinator, description, entry)
+        for description in IDENTITY_SENSOR_TYPES
+    ]
+    entities += [
+        PylontechIssueSensor(coordinator, description, entry)
+        for description in ISSUE_SENSOR_TYPES
     ]
 
     async_add_entities(entities)
@@ -351,15 +452,54 @@ class PylontechSensor(CoordinatorEntity, SensorEntity):
         self._attr_unique_id = f"{DOMAIN}_{entry.data['host']}_{description.key}"
 
         # Dit groepeert alle sensoren onder één Apparaat in Home Assistant
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, entry.entry_id)},
-            "name": entry.title,
-            "manufacturer": MANUFACTURER,
-            "model": MODEL,
-        }
+        self._attr_device_info = device_info(coordinator, entry)
 
     @property
     def native_value(self):
         """Return the state of the sensor."""
         # Haal de waarde op uit de dictionary die we in coordinator.py hebben gebouwd
         return self.coordinator.data.get(self.entity_description.key)
+
+
+class PylontechIdentitySensor(PylontechSensor):
+    """Static device information read once at startup."""
+
+    @property
+    def native_value(self):
+        return getattr(self.coordinator, "device_identity", {}).get(
+            self.entity_description.key
+        )
+
+    @property
+    def available(self) -> bool:
+        return self.native_value is not None
+
+
+class PylontechIssueSensor(PylontechSensor):
+    """Active faults or warnings as readable text, raw bits as attributes."""
+
+    @property
+    def _bits(self):
+        return combined_bits(self.coordinator.data or {}, self.entity_description.key)
+
+    @property
+    def _names(self):
+        return PCS_FAULTS if self.entity_description.key == "fault_bits" else PCS_WARNINGS
+
+    @property
+    def native_value(self):
+        bits = self._bits
+        if bits is None:
+            return None
+        return issues_state(active_issues(bits, self._names))
+
+    @property
+    def extra_state_attributes(self):
+        data = self.coordinator.data or {}
+        bits = self._bits
+        code_key = "fault_code" if self.entity_description.key == "fault_bits" else "warning_code"
+        return {
+            "active_issues": active_issues(bits, self._names) if bits is not None else [],
+            "raw_bits": bits,
+            "code": data.get(code_key),
+        }

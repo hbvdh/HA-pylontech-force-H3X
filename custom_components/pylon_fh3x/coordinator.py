@@ -11,7 +11,7 @@ from pymodbus.exceptions import ModbusException
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DOMAIN, DEFAULT_SCAN_INTERVAL
+from .const import DOMAIN, DEFAULT_SCAN_INTERVAL, MANUFACTURER, MODEL
 from .validation import TelemetryValidator, VALUE_RANGES
 from .telemetry_guard import TelemetryTransitionGuard
 
@@ -41,6 +41,33 @@ SINGLE_BLOCK_MAX_FAILURES = 3
 POLL_MAX_FAILED_READS = 3
 BACKOFF_AFTER_BAD_POLLS = 3
 BACKOFF_INTERVAL_S = 60
+
+# ---------------------------------------------------------------------------
+# Optional extra reads (device info, faults, AC-coupled PV, grid import limit)
+# ---------------------------------------------------------------------------
+# Each optional block is read with ONE attempt and never triggers a reconnect
+# on a Modbus exception reply. After OPTIONAL_MAX_FAILURES failed attempts in a
+# row a block is switched off until Home Assistant restarts, so firmware that
+# does not support a block cannot keep loading the dongle.
+# Set ENABLE_OPTIONAL_READS = False to switch all of them off at once.
+ENABLE_OPTIONAL_READS = True
+# The BMS (slave 1) info block is the only optional read on the BMS side.
+# Earlier experiments with larger BMS reads hung the dongle, so it can be
+# switched off on its own.
+READ_BMS_DEVICE_INFO = True
+OPTIONAL_MAX_FAILURES = 3
+# Slow blocks are read every SLOW_POLL_EVERY polls (5 s x 6 = every 30 s).
+SLOW_POLL_EVERY = 6
+
+# Read once at startup (static device information).
+IDENTITY_BLOCK = (30010, 31, 2)       # manufacturer, model, serial
+DEVICE_INFO_EXT_BLOCK = (30036, 43, 2) # PCS / AFCI firmware, rated power
+BMS_DEVICE_INFO_BLOCK = (0x1000, 31, 1)  # BMS main / HMI version, model
+
+# Read every SLOW_POLL_EVERY polls.
+FAULT_BITS_BLOCK = (30148, 5, 2)      # fault bits, warning bits, fw update state
+MONITOR_EXT_BLOCK = (30626, 34, 2)    # extended fault/warning bits, AC-coupled PV
+SITE_LIMIT_BLOCK = (40937, 2, 2)      # grid import power limit
 
 _GRID_PHASE_KEYS = (
     "grid_current_r", "grid_current_s", "grid_current_t",
@@ -111,6 +138,77 @@ def _decode_battery_sample(regs):
     }
 
 
+def _ascii(regs, idx, count):
+    raw = b"".join(struct.pack(">H", regs[i]) for i in range(idx, idx + count))
+    return raw.replace(b"\x00", b"").decode("ascii", errors="ignore").strip()
+
+
+def _version_4(regs, idx):
+    """Two registers as four bytes: V1.0.0.43 (PCS / AFCI firmware)."""
+    raw = struct.pack(">HH", regs[idx], regs[idx + 1])
+    return "V" + ".".join(str(part) for part in raw)
+
+
+def _version_2(reg):
+    """One register as two bytes: V0.3 (BMS main / HMI version)."""
+    return f"V{reg >> 8}.{reg & 0xFF}"
+
+
+def decode_identity(regs):
+    """PCS 30010-30040: identity strings."""
+    return {
+        "manufacturer": _ascii(regs, 0, 8),
+        "model": _ascii(regs, 8, 8),
+        "serial": _ascii(regs, 16, 8),
+    }
+
+
+def decode_device_info_ext(regs):
+    """PCS 30036-30078: firmware versions and ratings."""
+    return {
+        "pcs_max_output_power": get_16bit_uint(regs, 0),
+        "pcs_software_version": _version_4(regs, 3),
+        "pcs_afci_firmware_version": _version_4(regs, 25),
+        "pcs_parallel_machine_count": get_16bit_uint(regs, 35),
+    }
+
+
+def decode_bms_device_info(regs):
+    """BMS 0x1000-0x101E (unit 1): BMS firmware versions and model."""
+    return {
+        "bms_main_version": _version_2(regs[10]),
+        "bms_hmi_version": _version_2(regs[30]),
+        "bms_product_model": _ascii(regs, 14, 16),
+    }
+
+
+def decode_fault_bits(regs):
+    """PCS 30148-30152."""
+    return {
+        "fault_bits": (regs[0] << 16) | regs[1],
+        "warning_bits": (regs[2] << 16) | regs[3],
+        "firmware_update_state": regs[4],
+    }
+
+
+def decode_monitor_ext(regs):
+    """PCS 30626-30659 (part of the 30600 extended monitor block)."""
+    acc = [get_32bit_int(regs, i) for i in (28, 30, 32)]   # 30654/56/58
+    return {
+        "fault_bits_extended": (regs[0] << 16) | regs[1],   # 30626
+        "warning_bits_extended": (regs[2] << 16) | regs[3], # 30628
+        "acc_power_r": acc[0],
+        "acc_power_s": acc[1],
+        "acc_power_t": acc[2],
+        "acc_power_total": sum(acc),
+    }
+
+
+def decode_site_limit(regs):
+    """PCS 40937-40938: grid import power limit (U32, W)."""
+    return {"grid_import_power_limit": (regs[0] << 16) | regs[1]}
+
+
 def _decode_single_block_sample(regs):
     """Decode the sanity-check values of the combined 30100-30191 block."""
     return {
@@ -157,6 +255,15 @@ class PylontechCoordinator(DataUpdateCoordinator):
         self._failed_reads_this_poll = 0
         self._in_poll = False
 
+        # Optional reads: static device info, slow blocks and their cache.
+        self.device_identity: dict = {}
+        self._identity_done = False
+        self._bms_identity_done = False
+        self._optional_failures: dict[int, int] = {}
+        self._optional_disabled: set[int] = set()
+        self._slow_values: dict = {}
+        self._poll_count = 0
+
         super().__init__(
             hass,
             _LOGGER,
@@ -176,6 +283,113 @@ class PylontechCoordinator(DataUpdateCoordinator):
 
         await asyncio.sleep(delay)
         self._last_modbus_slave = slave
+
+    async def _read_optional(self, block, decode) -> dict | None:
+        """Read an optional block once; never retry or reconnect on a refusal.
+
+        A Modbus exception reply (e.g. illegal address on older firmware) only
+        counts a failure. A timeout or connection error closes the connection,
+        exactly like the normal read path, because a late reply could otherwise
+        be taken for the answer to the next request. After OPTIONAL_MAX_FAILURES
+        failures in a row the block is disabled until Home Assistant restarts.
+        Failures here never count towards the bad-poll backoff.
+        """
+        address, count, slave = block
+        if not ENABLE_OPTIONAL_READS or address in self._optional_disabled:
+            return None
+
+        error = None
+        registers = None
+        async with self._modbus_lock:
+            try:
+                if not self.client.connected:
+                    if not await self.client.connect():
+                        raise ConnectionError("Unable to connect to H3X")
+                    self._last_modbus_slave = None
+                await self._pace_modbus(slave)
+                res = await _modbus_read(self.client, address, count, slave)
+                if res is not None and not res.isError():
+                    regs = getattr(res, "registers", None)
+                    if (
+                        isinstance(regs, (list, tuple))
+                        and len(regs) == count
+                        and all(type(w) is int and 0 <= w <= 0xFFFF for w in regs)
+                    ):
+                        registers = list(regs)
+                    else:
+                        error = "malformed register response"
+                else:
+                    error = f"Modbus error response: {res}"
+            except Exception as err:  # optional: any error is only a failure
+                error = f"{type(err).__name__}: {err}"
+                self.client.close()
+                self._last_modbus_slave = None
+
+        if registers is not None:
+            self._optional_failures[address] = 0
+            try:
+                return decode(registers)
+            except (struct.error, IndexError, ValueError) as err:
+                error = f"decode error: {err}"
+
+        failures = self._optional_failures.get(address, 0) + 1
+        self._optional_failures[address] = failures
+        if failures >= OPTIONAL_MAX_FAILURES:
+            self._optional_disabled.add(address)
+            _LOGGER.warning(
+                "Optional block %s (Slave %s) failed %s times (%s); "
+                "not reading it again until Home Assistant restarts.",
+                address, slave, failures, error,
+            )
+        else:
+            _LOGGER.debug(
+                "Optional block %s (Slave %s) not available: %s",
+                address, slave, error,
+            )
+        return None
+
+    def build_device_info(self, entry) -> dict:
+        """Device registry info, enriched with firmware data when available."""
+        ident = self.device_identity
+        info = {
+            "identifiers": {(DOMAIN, entry.entry_id)},
+            "name": entry.title,
+            "manufacturer": ident.get("manufacturer") or MANUFACTURER,
+            "model": ident.get("model") or MODEL,
+        }
+        if ident.get("serial"):
+            info["serial_number"] = ident["serial"]
+        if ident.get("pcs_software_version"):
+            info["sw_version"] = f"PCS {ident['pcs_software_version']}"
+        bms = [
+            f"{label} {ident[key]}"
+            for label, key in (("BMS", "bms_main_version"), ("HMI", "bms_hmi_version"))
+            if ident.get(key)
+        ]
+        if bms:
+            info["hw_version"] = " / ".join(bms)
+        return info
+
+    def _push_device_info(self) -> None:
+        """Write firmware/model info to the device registry once it is known.
+
+        At startup this runs before the entities exist (the entities then pick
+        it up via build_device_info); if the identity only arrives on a later
+        poll, the existing device entry is updated here.
+        """
+        entry = getattr(self, "config_entry_ref", None)
+        if entry is None or not self.device_identity:
+            return
+        try:
+            from homeassistant.helpers import device_registry as dr
+
+            info = self.build_device_info(entry)
+            info.pop("name", None)
+            dr.async_get(self.hass).async_get_or_create(
+                config_entry_id=entry.entry_id, **info
+            )
+        except Exception as err:  # never let device info break polling
+            _LOGGER.debug("Could not update device info: %s", err)
 
     def _find_suspicious_values(self, data: dict) -> list[str]:
         """Find implausible data or abrupt grid-current changes, without mutating state."""
@@ -568,6 +782,14 @@ class PylontechCoordinator(DataUpdateCoordinator):
                 data["inverter_temperature"] = get_16bit_int(r_inverter_main, 46) * 0.1
                 data["heatsink_temperature"] = get_16bit_int(r_inverter_main, 47) * 0.1
 
+                # Already inside the existing 30100/48 read: no extra Modbus traffic.
+                # 30110/30112: third-party meter (CT2 / AC-coupled PV). The V1.2
+                # protocol says U32; the official integration reads it signed.
+                data["third_party_meter_power"] = get_32bit_int(r_inverter_main, 10)
+                data["third_party_meter_energy"] = get_32bit_float(r_inverter_main, 12)
+                data["fault_code"] = get_16bit_uint(r_inverter_main, 17)
+                data["warning_code"] = get_16bit_uint(r_inverter_main, 18)
+
             # Per-phase grid current/power (CT clamp measurements at the grid connection).
             if r_grid_phases:
                 data["grid_current_r"] = get_16bit_int(r_grid_phases, 0) * 0.1
@@ -626,6 +848,31 @@ class PylontechCoordinator(DataUpdateCoordinator):
                 data["period_3"] = get_16bit_uint(r_ems, 19)
                 data["period_4"] = get_16bit_uint(r_ems, 25)
 
+            # Optional PCS (slave 2) reads, still before switching to slave 1.
+            # Skipped entirely when a normal read already failed this poll, so a
+            # struggling dongle never gets extra requests.
+            optional_ok = self._failed_reads_this_poll == 0
+            if optional_ok and not self._identity_done:
+                self._identity_done = True
+                for block, decode in (
+                    (IDENTITY_BLOCK, decode_identity),
+                    (DEVICE_INFO_EXT_BLOCK, decode_device_info_ext),
+                ):
+                    values = await self._read_optional(block, decode)
+                    if values:
+                        self.device_identity.update(values)
+                self._push_device_info()
+            self._poll_count += 1
+            if optional_ok and self._poll_count % SLOW_POLL_EVERY == 1:
+                for block, decode in (
+                    (FAULT_BITS_BLOCK, decode_fault_bits),
+                    (MONITOR_EXT_BLOCK, decode_monitor_ext),
+                    (SITE_LIMIT_BLOCK, decode_site_limit),
+                ):
+                    values = await self._read_optional(block, decode)
+                    if values:
+                        self._slow_values.update(values)
+
             # Read all BMS values from one contiguous slave-1 block.
             r_bms = await self._read_with_sanity_retry(
                 5123,
@@ -649,6 +896,27 @@ class PylontechCoordinator(DataUpdateCoordinator):
                 data["bms_cell_voltage_max"] = get_16bit_uint(r_bms, 13) * 0.001
                 data["bms_cell_voltage_min"] = get_16bit_uint(r_bms, 14) * 0.001
                 data["bms_soh"] = get_16bit_uint(r_bms, 29)
+
+            # Optional BMS (slave 1) device info, once, after the normal BMS read
+            # so the slave only switches once per poll.
+            if (
+                READ_BMS_DEVICE_INFO
+                and self._failed_reads_this_poll == 0
+                and not self._bms_identity_done
+            ):
+                self._bms_identity_done = True
+                values = await self._read_optional(
+                    BMS_DEVICE_INFO_BLOCK, decode_bms_device_info
+                )
+                if values:
+                    self.device_identity.update(values)
+                    self._push_device_info()
+
+            # Slow optional values are cached between their reads, so their
+            # sensors do not flip to unknown in between. Only added when this
+            # poll produced real data, so a dead dongle still raises UpdateFailed.
+            if data:
+                data = {**self._slow_values, **data}
 
             # Drop just the unconfirmed fields; preserve all other readings.
             for key in unconfirmed:

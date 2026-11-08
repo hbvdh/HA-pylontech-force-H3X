@@ -38,6 +38,7 @@ def load_sensor():
     sensor.SensorEntityDescription = SimpleNamespace
     constants = modules["homeassistant.const"]
     constants.PERCENTAGE = "%"
+    constants.EntityCategory = SimpleNamespace(DIAGNOSTIC="diagnostic", CONFIG="config")
     for name, values in {
         "UnitOfPower": {"WATT": "W", "KILO_WATT": "kW"},
         "UnitOfApparentPower": {"VOLT_AMPERE": "VA"},

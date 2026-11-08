@@ -39,6 +39,12 @@ This integration pulls comprehensive data from both the Inverter and the interna
 * **�🔋 Battery (Inverter perspective):** Charge/Discharge Power, Voltage, Current, SOC, and Total Charge/Discharge Energy.
 * **🧠 BMS (Internal):** Cell Voltage Max/Min, BMS Temperature, BMS SOC, State of Health (SOH), and total battery cycles.
 * **🛠️ Status:** Inverter Status, Battery Status, and internal temperatures.
+* **🔌 AC-coupled PV / third-party meter:** AC Coupled PV Power (total, and per phase R/S/T, disabled by default), Third Party Meter Power and Energy (registers 30110/30112, CT2 of a DTSU666-6CT or similar).
+* **🚨 Faults & warnings (diagnostic):** Inverter Problem (binary), Inverter Faults and Inverter Warnings as readable text with the raw bits as attributes, Fault Code, Warning Code, Firmware Update State.
+* **🏷️ Device information:** model, serial number, PCS firmware and BMS/HMI version on the device page, plus diagnostic sensors for the PCS, AFCI, BMS and HMI versions and the PCS rated output power.
+* **📏 Grid Import Power Limit (diagnostic):** the import limit configured in the inverter (register 40937, read-only).
+
+**Optional reads.** Device information is read once at startup; faults, AC-coupled PV and the import limit every 30 s. Each of these blocks is read with a single attempt and is switched off until the next restart after three failures, so firmware that does not support a block cannot keep loading the dongle. They are skipped in any poll where a normal read already failed. To switch them off, set `ENABLE_OPTIONAL_READS = False` (all) or `READ_BMS_DEVICE_INFO = False` (BMS info only) at the top of `coordinator.py`. Fault and warning bit names come from the official [Pylontech Research integration](https://github.com/Pylontech-Research/HA-pylontech-force-H3X) (MIT).
 
 ## 📈 Dashboard: power flow card
 
