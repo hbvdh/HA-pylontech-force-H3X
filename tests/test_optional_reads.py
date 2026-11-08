@@ -160,6 +160,18 @@ class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
         # other optional blocks keep working
         self.assertEqual(data["grid_import_power_limit"], 7000)
 
+    async def test_ok_reads_log_at_debug_and_failures_at_warning(self):
+        self.refused.add(40937)
+        with patch.object(coordinator_module._LOGGER, "debug") as debug, \
+                patch.object(coordinator_module._LOGGER, "warning") as warning:
+            await self.poll()
+        ok = [c for c in debug.call_args_list if "OK in" in c.args[0]]
+        failed = [c for c in warning.call_args_list if "FAILED" in c.args[0]]
+        self.assertTrue(ok)
+        self.assertFalse(any("OK in" in c.args[0] for c in warning.call_args_list))
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(failed[0].args[1], 40937)
+
     async def test_optional_reads_skipped_when_a_normal_read_failed(self):
         self.refused.add(30183)  # normal read fails this poll
         await self.poll()

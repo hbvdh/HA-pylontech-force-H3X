@@ -77,9 +77,9 @@ READ_SITE_LIMIT = 300          # 40937/2   grid import power limit
 # Fallback for the Growatt test; this block confused the dongle in a first test.
 READ_MONITOR_EXT = 0           # 30626/34  extended bits, AC-coupled PV (newer firmware)
 
-# Log every optional read (address, result, duration) at WARNING level, so the
-# last request before any dongle problem is visible in the normal HA log.
-LOG_OPTIONAL_READS = True
+# Logging: a successful optional read is logged at DEBUG (address, duration);
+# enable debug logging for the integration to see every read. A failed read is
+# always logged at WARNING.
 
 OPTIONAL_MAX_FAILURES = 3
 
@@ -390,11 +390,10 @@ class PylontechCoordinator(DataUpdateCoordinator):
                 error = f"decode error: {err}"
             else:
                 self._optional_failures[address] = 0
-                if LOG_OPTIONAL_READS:
-                    _LOGGER.warning(
-                        "Optional read %s/%s (Slave %s): OK in %.2f s",
-                        address, count, slave, duration,
-                    )
+                _LOGGER.debug(
+                    "Optional read %s/%s (Slave %s): OK in %.2f s",
+                    address, count, slave, duration,
+                )
                 return values
 
         failures = self._optional_failures.get(address, 0) + 1
@@ -402,13 +401,12 @@ class PylontechCoordinator(DataUpdateCoordinator):
         disable = no_answer or failures >= OPTIONAL_MAX_FAILURES
         if disable:
             self._optional_disabled.add(address)
-        if LOG_OPTIONAL_READS or disable:
-            _LOGGER.warning(
-                "Optional read %s/%s (Slave %s): FAILED in %.2f s (%s)%s",
-                address, count, slave, duration, error,
-                "; block switched off until Home Assistant restarts"
-                if disable else f"; attempt {failures}/{OPTIONAL_MAX_FAILURES}",
-            )
+        _LOGGER.warning(
+            "Optional read %s/%s (Slave %s): FAILED in %.2f s (%s)%s",
+            address, count, slave, duration, error,
+            "; block switched off until Home Assistant restarts"
+            if disable else f"; attempt {failures}/{OPTIONAL_MAX_FAILURES}",
+        )
         return None
 
     def build_device_info(self, entry) -> dict:
