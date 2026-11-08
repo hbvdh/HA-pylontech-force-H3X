@@ -3,6 +3,7 @@ import asyncio
 import logging
 import math
 import struct
+import time
 from datetime import timedelta
 
 from pymodbus.client import AsyncModbusTcpClient
@@ -45,29 +46,58 @@ BACKOFF_INTERVAL_S = 60
 # ---------------------------------------------------------------------------
 # Optional extra reads (device info, faults, AC-coupled PV, grid import limit)
 # ---------------------------------------------------------------------------
-# Each optional block is read with ONE attempt and never triggers a reconnect
-# on a Modbus exception reply. After OPTIONAL_MAX_FAILURES failed attempts in a
-# row a block is switched off until Home Assistant restarts, so firmware that
-# does not support a block cannot keep loading the dongle.
-# Set ENABLE_OPTIONAL_READS = False to switch all of them off at once.
-ENABLE_OPTIONAL_READS = True
-# The BMS (slave 1) info block is the only optional read on the BMS side.
-# Earlier experiments with larger BMS reads hung the dongle, so it can be
-# switched off on its own.
-READ_BMS_DEVICE_INFO = True
+# Every optional block has its own switch below and is OFF by default.
+# Switch them on one at a time and watch the log between steps.
+#
+# Safety rules for each optional block:
+# - one attempt, no retry;
+# - a Modbus exception reply (register not supported) counts as a failure,
+#   without reconnecting; after OPTIONAL_MAX_FAILURES the block is switched off;
+# - NO answer (timeout / connection error) switches the block off at once,
+#   because an unanswered request is what confuses the dongle;
+# - a switched-off block stays off until Home Assistant restarts;
+# - optional failures never count towards the bad-poll backoff;
+# - optional reads are skipped in any poll where a normal read failed.
+ENABLE_OPTIONAL_READS = True   # master switch: False = all optional reads off
+
+# Read once at startup (static device information).
+READ_IDENTITY = False          # 30010/31  manufacturer, model, serial
+READ_DEVICE_INFO_EXT = False   # 30036/43  PCS / AFCI firmware, rated power
+READ_BMS_DEVICE_INFO = False   # 0x1000/31 (BMS, slave 1) BMS main / HMI version
+
+# Read every SLOW_POLL_EVERY polls.
+READ_FAULT_BITS = False        # 30148/5   fault bits, warning bits, fw update state
+READ_SITE_LIMIT = False        # 40937/2   grid import power limit
+READ_MONITOR_EXT = False       # 30626/34  extended bits, AC-coupled PV (newer firmware)
+
+# Log every optional read (address, result, duration) at WARNING level, so the
+# last request before any dongle problem is visible in the normal HA log.
+LOG_OPTIONAL_READS = True
+
 OPTIONAL_MAX_FAILURES = 3
 # Slow blocks are read every SLOW_POLL_EVERY polls (5 s x 6 = every 30 s).
 SLOW_POLL_EVERY = 6
 
-# Read once at startup (static device information).
-IDENTITY_BLOCK = (30010, 31, 2)       # manufacturer, model, serial
-DEVICE_INFO_EXT_BLOCK = (30036, 43, 2) # PCS / AFCI firmware, rated power
-BMS_DEVICE_INFO_BLOCK = (0x1000, 31, 1)  # BMS main / HMI version, model
+IDENTITY_BLOCK = (30010, 31, 2)
+DEVICE_INFO_EXT_BLOCK = (30036, 43, 2)
+BMS_DEVICE_INFO_BLOCK = (0x1000, 31, 1)
+FAULT_BITS_BLOCK = (30148, 5, 2)
+SITE_LIMIT_BLOCK = (40937, 2, 2)
+MONITOR_EXT_BLOCK = (30626, 34, 2)
 
-# Read every SLOW_POLL_EVERY polls.
-FAULT_BITS_BLOCK = (30148, 5, 2)      # fault bits, warning bits, fw update state
-MONITOR_EXT_BLOCK = (30626, 34, 2)    # extended fault/warning bits, AC-coupled PV
-SITE_LIMIT_BLOCK = (40937, 2, 2)      # grid import power limit
+
+def _block_enabled(block) -> bool:
+    """Per-block switch, looked up at call time so tests can patch it."""
+    switch = {
+        IDENTITY_BLOCK[0]: "READ_IDENTITY",
+        DEVICE_INFO_EXT_BLOCK[0]: "READ_DEVICE_INFO_EXT",
+        BMS_DEVICE_INFO_BLOCK[0]: "READ_BMS_DEVICE_INFO",
+        FAULT_BITS_BLOCK[0]: "READ_FAULT_BITS",
+        SITE_LIMIT_BLOCK[0]: "READ_SITE_LIMIT",
+        MONITOR_EXT_BLOCK[0]: "READ_MONITOR_EXT",
+    }.get(block[0])
+    return ENABLE_OPTIONAL_READS and bool(switch and globals()[switch])
+
 
 _GRID_PHASE_KEYS = (
     "grid_current_r", "grid_current_s", "grid_current_t",
@@ -295,11 +325,13 @@ class PylontechCoordinator(DataUpdateCoordinator):
         Failures here never count towards the bad-poll backoff.
         """
         address, count, slave = block
-        if not ENABLE_OPTIONAL_READS or address in self._optional_disabled:
+        if not _block_enabled(block) or address in self._optional_disabled:
             return None
 
         error = None
         registers = None
+        no_answer = False
+        started = time.monotonic()
         async with self._modbus_lock:
             try:
                 if not self.client.connected:
@@ -320,31 +352,38 @@ class PylontechCoordinator(DataUpdateCoordinator):
                         error = "malformed register response"
                 else:
                     error = f"Modbus error response: {res}"
-            except Exception as err:  # optional: any error is only a failure
+            except Exception as err:  # no (valid) answer from the dongle
                 error = f"{type(err).__name__}: {err}"
+                no_answer = True
                 self.client.close()
                 self._last_modbus_slave = None
+        duration = time.monotonic() - started
 
         if registers is not None:
-            self._optional_failures[address] = 0
             try:
-                return decode(registers)
+                values = decode(registers)
             except (struct.error, IndexError, ValueError) as err:
                 error = f"decode error: {err}"
+            else:
+                self._optional_failures[address] = 0
+                if LOG_OPTIONAL_READS:
+                    _LOGGER.warning(
+                        "Optional read %s/%s (Slave %s): OK in %.2f s",
+                        address, count, slave, duration,
+                    )
+                return values
 
         failures = self._optional_failures.get(address, 0) + 1
         self._optional_failures[address] = failures
-        if failures >= OPTIONAL_MAX_FAILURES:
+        disable = no_answer or failures >= OPTIONAL_MAX_FAILURES
+        if disable:
             self._optional_disabled.add(address)
+        if LOG_OPTIONAL_READS or disable:
             _LOGGER.warning(
-                "Optional block %s (Slave %s) failed %s times (%s); "
-                "not reading it again until Home Assistant restarts.",
-                address, slave, failures, error,
-            )
-        else:
-            _LOGGER.debug(
-                "Optional block %s (Slave %s) not available: %s",
-                address, slave, error,
+                "Optional read %s/%s (Slave %s): FAILED in %.2f s (%s)%s",
+                address, count, slave, duration, error,
+                "; block switched off until Home Assistant restarts"
+                if disable else f"; attempt {failures}/{OPTIONAL_MAX_FAILURES}",
             )
         return None
 
@@ -899,11 +938,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
 
             # Optional BMS (slave 1) device info, once, after the normal BMS read
             # so the slave only switches once per poll.
-            if (
-                READ_BMS_DEVICE_INFO
-                and self._failed_reads_this_poll == 0
-                and not self._bms_identity_done
-            ):
+            if self._failed_reads_this_poll == 0 and not self._bms_identity_done:
                 self._bms_identity_done = True
                 values = await self._read_optional(
                     BMS_DEVICE_INFO_BLOCK, decode_bms_device_info

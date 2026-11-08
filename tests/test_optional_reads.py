@@ -16,6 +16,13 @@ from test_coordinator import (
 )
 
 
+ALL_SWITCHES = (
+    "READ_IDENTITY", "READ_DEVICE_INFO_EXT", "READ_BMS_DEVICE_INFO",
+    "READ_FAULT_BITS", "READ_SITE_LIMIT", "READ_MONITOR_EXT",
+)
+OPTIONAL_ADDRESSES = (30010, 30036, 0x1000, 30148, 30626, 40937)
+
+
 def ascii_regs(text, count):
     raw = text.encode("ascii").ljust(count * 2, b"\x00")
     return list(struct.unpack(f">{count}H", raw))
@@ -57,10 +64,16 @@ class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
         self.coordinator.use_single_block_read = False
         self.blocks = optional_blocks()
         self.refused = set()
+        self.silent = set()
         self.calls = []
         self.now = 0
         self.coordinator.client.read_holding_registers.side_effect = self.response
+        switches = [
+            patch.object(coordinator_module, name, True)
+            for name in ALL_SWITCHES
+        ]
         for patcher in (
+            *switches,
             patch.object(coordinator_module.asyncio, "sleep", new=AsyncMock()),
             patch.object(validation_module, "time", SimpleNamespace(monotonic=lambda: self.now)),
             patch.object(validation_module._LOGGER, "warning"),
@@ -71,6 +84,8 @@ class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
 
     async def response(self, *, address, count, **kwargs):
         self.calls.append(address)
+        if address in self.silent:
+            raise TimeoutError("no response")
         if address in self.refused:
             # Modbus exception reply (illegal data address), as pymodbus returns it.
             return SimpleNamespace(isError=lambda: True, registers=None)
@@ -144,8 +159,50 @@ class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(coordinator_module, "ENABLE_OPTIONAL_READS", False):
             for _ in range(coordinator_module.SLOW_POLL_EVERY):
                 await self.poll()
-        for address in (30010, 30036, 0x1000, 30148, 30626, 40937):
+        for address in OPTIONAL_ADDRESSES:
             self.assertNotIn(address, self.calls)
+
+    async def test_unanswered_block_is_switched_off_after_one_timeout(self):
+        self.silent.add(30626)
+        for _ in range(coordinator_module.SLOW_POLL_EVERY * 3):
+            data = await self.poll()
+        self.assertEqual(self.calls.count(30626), 1)
+        self.assertIn(30626, self.coordinator._optional_disabled)
+        self.assertEqual(self.coordinator._bad_polls, 0)
+        self.assertIn("battery_soc", data)
+
+    async def test_each_block_has_its_own_switch(self):
+        with patch.object(coordinator_module, "READ_MONITOR_EXT", False), \
+                patch.object(coordinator_module, "READ_BMS_DEVICE_INFO", False):
+            for _ in range(coordinator_module.SLOW_POLL_EVERY + 1):
+                await self.poll()
+        self.assertNotIn(30626, self.calls)
+        self.assertNotIn(0x1000, self.calls)
+        self.assertIn(30148, self.calls)
+        self.assertIn(40937, self.calls)
+        self.assertIn(30010, self.calls)
+
+
+class DefaultsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_all_optional_blocks_are_off_by_default(self):
+        for name in ALL_SWITCHES:
+            self.assertFalse(getattr(coordinator_module, name), name)
+        coordinator = coordinator_module.PylontechCoordinator(None, "test", 502)
+        coordinator.use_single_block_read = False
+        blocks = valid_blocks()
+        calls = []
+
+        async def response(*, address, count, **kwargs):
+            calls.append(address)
+            return SimpleNamespace(isError=lambda: False, registers=blocks[address])
+
+        coordinator.client.read_holding_registers.side_effect = response
+        with patch.object(coordinator_module.asyncio, "sleep", new=AsyncMock()), \
+                patch.object(coordinator_module._LOGGER, "warning"):
+            for _ in range(coordinator_module.SLOW_POLL_EVERY):
+                await coordinator._async_update_data()
+        for address in OPTIONAL_ADDRESSES:
+            self.assertNotIn(address, calls)
 
 
 class AlarmDecodeTests(unittest.TestCase):
