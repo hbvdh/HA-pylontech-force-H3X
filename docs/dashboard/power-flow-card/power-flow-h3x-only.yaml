@@ -138,9 +138,15 @@ custom_fields:
 
       const netTxt = Number.isNaN(net) ? 'geen data'
         : net > CFG.netIdle ? 'Afname' : net < -CFG.netIdle ? 'Teruglevering' : 'In balans';
-      const acTxt  = Number.isNaN(ac) ? '—'
-        : ac < -CFG.idle ? 'Opladen'
-        : ac > CFG.idle ? (batP > CFG.idle ? 'Ontladen' : 'Levert PV')
+      // H3X status follows the battery first: the H3X itself draws ~30-50 W from
+      // AC in stand-by, which must not read as charging.
+      // Battery idle in User mode (Predbat power ref 0 %) = battery held, house on grid.
+      const acIdle = 50;
+      const acTxt  = Number.isNaN(ac) ? '\u2014'
+        : batP > CFG.idle ? 'Ontladen'
+        : ac > acIdle ? 'Levert PV'
+        : batP < -CFG.idle ? 'Opladen'
+        : /user/i.test(ems) ? 'Vasthouden'
         : 'Stand-by';
       const batTxt = Number.isNaN(batP) ? '—'
         : batP > CFG.idle ? 'Ontladen' : batP < -CFG.idle ? 'Laden' : 'Stand-by';
@@ -155,7 +161,7 @@ custom_fields:
         + line('bat',  'M260 160 V130',           batP, C.bat[0])
         + line('net',  'M150 185 H168 V295 H365', net,  C.net[0], CFG.netIdle)
         + (hasSchuur ? line('schuur', 'M150 350 H365', sch, C.pv[0]) : '')
-        + line('ac',   'M335 65 H365',            ac,   'var(--secondary-text-color)')
+        + line('ac',   'M335 65 H365',            ac,   'var(--secondary-text-color)', acIdle)
         + line('huis', 'M365 200 H395',           huis, C.huis[0]);
       // AC rail as a bus: each segment shows its own flow (Kirchhoff), so you can
       // follow H3X -> house or grid -> house along the rail without guessing.
@@ -168,7 +174,7 @@ custom_fields:
                   : (net > CFG.netIdle || schW <= CFG.idle) ? C.net[0] : C.pv[0];
       const midIdle = schW > CFG.idle ? CFG.idle : CFG.netIdle;
       const rail = `<path d="M365 65 V${railEnd}" fill="none" style="stroke:var(--secondary-text-color);stroke-width:2"/>`
-        + line('r1', 'M365 65 V200',  ac,   'var(--secondary-text-color)', CFG.idle, true)
+        + line('r1', 'M365 65 V200',  ac,   'var(--secondary-text-color)', acIdle, true)
         + line('r2', 'M365 295 V200', midW, midC, midIdle, true)
         + (hasSchuur ? line('r3', 'M365 350 V295', sch, C.pv[0], CFG.idle, true) : '')
         + t(370, railEnd - 5, 'AC', 'ps');
