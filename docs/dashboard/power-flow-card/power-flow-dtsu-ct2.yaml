@@ -1,0 +1,217 @@
+type: custom:button-card
+show_name: false
+show_icon: false
+show_state: false
+tap_action:
+  action: none
+grid_options:
+  columns: full
+  rows: auto
+triggers_update:
+  - sensor.dtsu_direct_actief_vermogen_l1
+  - sensor.dtsu_direct_actief_vermogen_l2
+  - sensor.dtsu_direct_actief_vermogen_l3
+  - sensor.dtsu_direct_ct2_actief_vermogen_l1
+  - sensor.dtsu_direct_ct2_actief_vermogen_l2
+  - sensor.dtsu_direct_ct2_actief_vermogen_l3
+  - sensor.pylontech_pv_power_watts
+  - sensor.kelder_pylontech_force_h3x_pv1_power
+  - sensor.kelder_pylontech_force_h3x_pv2_power
+  - sensor.pylontech_force_h3x_ac_total_power
+  - select.pylontech_force_h3x_ems_mode
+  - sensor.pylontech_force_h3x_heatsink_temperature
+  - sensor.pylontech_battery_power_watts
+  - sensor.pylontech_force_h3x_battery_soc
+  - sensor.pylontech_force_h3x_battery_voltage
+  - sensor.pylontech_force_h3x_battery_current
+  - sensor.batterij_resterend_kwh
+  - sensor.pylontech_load_power_watts
+styles:
+  card:
+    - padding: 8px
+  grid:
+    - grid-template-areas: '"flow"'
+    - grid-template-columns: 1fr
+  custom_fields:
+    flow:
+      - width: 100%
+extra_styles: |
+  @keyframes pfflow { to { stroke-dashoffset: -12; } }
+  .pt  { font-size: 13px;   font-weight: 500; fill: var(--primary-text-color); }
+  .pb  { font-size: 24px;   fill: var(--primary-text-color); }
+  .pb2 { font-size: 30px;   font-weight: 500; fill: var(--primary-text-color); }
+  .ps  { font-size: 11.5px; fill: var(--secondary-text-color); }
+custom_fields:
+  flow: |
+    [[[
+      // ---- Configuratie: alleen hier aanpassen ----
+      const CFG = {
+        netLabel: "Net (DTSU)",   // titel van het netblok
+        net: ["sensor.dtsu_direct_actief_vermogen_l1", "sensor.dtsu_direct_actief_vermogen_l2", "sensor.dtsu_direct_actief_vermogen_l3"],   // netvermogen (W, afname +); meerdere sensoren worden opgeteld
+        netPhases: ["sensor.dtsu_direct_actief_vermogen_l1", "sensor.dtsu_direct_actief_vermogen_l2", "sensor.dtsu_direct_actief_vermogen_l3"],   // per fase getoond onder het netblok (leeg = niet tonen)
+        schuur: ["sensor.dtsu_direct_ct2_actief_vermogen_l1", "sensor.dtsu_direct_ct2_actief_vermogen_l2", "sensor.dtsu_direct_ct2_actief_vermogen_l3"],   // AC-gekoppelde PV (leeg = blok weg, kaart wordt korter)
+        pv: "sensor.pylontech_pv_power_watts",   // totaal PV-vermogen op de H3X (DC)
+        pvStrings: [["PV1", "sensor.kelder_pylontech_force_h3x_pv1_power"], ["PV2", "sensor.kelder_pylontech_force_h3x_pv2_power"]],   // strings onder het PV-blok: [label, sensor]
+        ac: "sensor.pylontech_force_h3x_ac_total_power",
+        ems: "select.pylontech_force_h3x_ems_mode",
+        heat: "sensor.pylontech_force_h3x_heatsink_temperature",
+        batP: "sensor.pylontech_battery_power_watts",   // batterijvermogen (ontladen +)
+        soc: "sensor.pylontech_force_h3x_battery_soc",
+        batV: "sensor.pylontech_force_h3x_battery_voltage",
+        batA: "sensor.pylontech_force_h3x_battery_current",
+        batKwh: "sensor.batterij_resterend_kwh",   // resterende kWh-sensor; null = berekenen uit SoC x capacity
+        capacity: null,   // batterijcapaciteit in kWh (alleen als batKwh null is)
+        huis: "sensor.pylontech_load_power_watts",   // totale load
+        idle: 25,   // W: daaronder lijn grijs en stil
+        netIdle: 100,   // W: drempel net (gelijk aan mushroom Net Status)
+      };
+
+      // ---- Helpers ----
+      // Leest een sensor als getal in W (kW/kVA worden omgerekend).
+      const num = (id) => {
+        if (!id) return NaN;
+        const s = states[id];
+        if (!s) return NaN;
+        let v = parseFloat(s.state);
+        if (!Number.isFinite(v)) return NaN;
+        const u = (s.attributes && s.attributes.unit_of_measurement) || '';
+        if (u === 'kW' || u === 'kVA') v *= 1000;
+        return v;
+      };
+      const unit = (id, dflt) => (states[id] && states[id].attributes.unit_of_measurement) || dflt;
+      const sum = (ids) => {
+        if (!ids || !ids.length) return NaN;
+        let t = 0;
+        for (const id of ids) { const v = num(id); if (Number.isNaN(v)) return NaN; t += v; }
+        return t;
+      };
+      const minus = (s) => s.replace('-', '−');
+      const fW  = (v) => Number.isNaN(v) ? '—' : Math.round(Math.abs(v)).toLocaleString('nl-NL') + ' W';
+      const fWs = (v) => Number.isNaN(v) ? '—' : minus(Math.round(v).toLocaleString('nl-NL'));
+      const f1  = (v, u) => Number.isNaN(v) ? '—'
+        : minus(v.toLocaleString('nl-NL', {minimumFractionDigits: 1, maximumFractionDigits: 1})) + u;
+      const now = Date.now() / 1000;
+      let defs = '';
+
+      // Kleuren per blok: [rand, vulling]. Werkt in licht en donker thema.
+      const C = {
+        pv:   ['#f9a825', 'rgba(255, 213, 79, 0.16)'],
+        net:  ['#1e88e5', 'rgba(33, 150, 243, 0.14)'],
+        bat:  ['#43a047', 'rgba(76, 175, 80, 0.14)'],
+        huis: ['#e53935', 'rgba(244, 67, 54, 0.12)'],
+        h3x:  ['var(--secondary-text-color)', 'var(--secondary-background-color)'],
+      };
+
+      // Stroomlijn: w > 0 = stroom in tekenrichting van het pad, w < 0 = tegengesteld.
+      // De animatiefase volgt de klok, zodat een her-render elke seconde niet hapert.
+      const line = (id, d, w, color, idle = CFG.idle) => {
+        if (Number.isNaN(w) || Math.abs(w) < idle) {
+          return `<path d="${d}" fill="none" style="stroke:var(--divider-color);stroke-width:2;stroke-dasharray:2 5"/>`;
+        }
+        const back  = w < 0;
+        const speed = Math.min(160, 20 + Math.abs(w) * 0.03);   // px per seconde
+        const dur   = 12 / speed;
+        const delay = -(now % dur);
+        defs += `<marker id="pf-${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:${color}"/></marker>`;
+        return `<path d="${d}" fill="none" ${back ? 'marker-start' : 'marker-end'}="url(#pf-${id})"
+          style="stroke:${color};stroke-width:3;stroke-dasharray:6 6;animation:pfflow ${dur.toFixed(3)}s linear ${delay.toFixed(3)}s infinite ${back ? 'reverse' : 'normal'}"/>`;
+      };
+      const box = (x, y, w, h, k) =>
+        `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" style="fill:${(C[k] || C.h3x)[1]};stroke:${(C[k] || C.h3x)[0]};stroke-width:2"/>`;
+      const t = (x, y, txt, cls) => `<text x="${x}" y="${y}" class="${cls}">${txt}</text>`;
+
+      // ---- Waarden ----
+      const hasSchuur = !!(CFG.schuur && CFG.schuur.length);
+      const pv   = num(CFG.pv);
+      const net  = sum(CFG.net);
+      const netL = (CFG.netPhases || []).map(num);
+      const schR = hasSchuur ? sum(CFG.schuur) : NaN;
+      const sch  = Number.isNaN(schR) ? NaN : Math.abs(schR);   // PV levert alleen
+      const ac   = num(CFG.ac);
+      const batP = num(CFG.batP);
+      const soc  = num(CFG.soc);
+      const huis = num(CFG.huis);
+      const ems  = states[CFG.ems] ? states[CFG.ems].state : '—';
+      const kwh  = CFG.batKwh ? num(CFG.batKwh)
+                 : (CFG.capacity && !Number.isNaN(soc) ? CFG.capacity * soc / 100 : NaN);
+      const tempRaw = states[CFG.heat] ? parseFloat(states[CFG.heat].state) : NaN;
+      const tempC = unit(CFG.heat, '°C') === '°F' ? (tempRaw - 32) * 5 / 9 : tempRaw;   // altijd °C
+
+      const netTxt = Number.isNaN(net) ? 'geen data'
+        : net > CFG.netIdle ? 'Afname' : net < -CFG.netIdle ? 'Teruglevering' : 'In balans';
+      const acTxt  = Number.isNaN(ac) ? '—'
+        : ac > CFG.idle ? 'Levert' : ac < -CFG.idle ? 'Neemt op' : 'Stand-by';
+      const batTxt = Number.isNaN(batP) ? '—'
+        : batP > CFG.idle ? 'Ontladen' : batP < -CFG.idle ? 'Laden' : 'Stand-by';
+
+      // ---- Maatvoering (korter als er geen schuur-PV is) ----
+      const H       = hasSchuur ? 400 : 305;
+      const railEnd = hasSchuur ? 350 : 295;
+
+      // ---- Lijnen (kleur van het bronblok; de pijl geeft de richting) ----
+      const lines =
+          line('dak',  'M150 50 H185',            pv,   C.pv[0])
+        + line('bat',  'M260 160 V130',           batP, C.bat[0])
+        + line('net',  'M150 185 H168 V295 H365', net,  C.net[0], CFG.netIdle)
+        + (hasSchuur ? line('schuur', 'M150 350 H365', sch, C.pv[0]) : '')
+        + line('ac',   'M335 65 H365',            ac,   'var(--secondary-text-color)')
+        + line('huis', 'M365 200 H395',           huis, C.huis[0]);
+      const rail = `<path d="M365 65 V${railEnd}" fill="none" style="stroke:var(--secondary-text-color);stroke-width:2"/>`
+        + t(370, railEnd - 5, 'AC', 'ps');
+
+      // ---- Batterij-vulling naar SoC ----
+      const socC  = Number.isNaN(soc) ? 0 : Math.max(0, Math.min(100, soc));
+      const fillH = 120 * socC / 100;
+      const cFill = socC < 15 ? '#e53935' : socC < 30 ? '#fb8c00' : C.bat[0];
+      defs += `<clipPath id="pf-batclip"><rect x="185" y="160" width="150" height="120" rx="10"/></clipPath>`;
+      const batFill = `<rect x="185" y="${280 - fillH}" width="150" height="${fillH}" clip-path="url(#pf-batclip)" style="fill:${cFill};opacity:0.25"/>`;
+
+      // ---- Blokken ----
+      const pvSub = (CFG.pvStrings || [])
+        .map(([lbl, id]) => `${lbl} ${fWs(num(id))}`).join(' · ') + ((CFG.pvStrings || []).length ? ' W' : '');
+      const phaseX = [12, 58, 104];
+      const phases = netL.length
+        ? netL.map((v, i) => t(phaseX[i], 218, `L${i + 1}`, 'ps') + t(phaseX[i], 234, fWs(v), 'ps')).join('')
+        : '';
+
+      const blocks =
+        // Dak-PV
+          box(0, 0, 150, 100, 'pv')
+        + t(12, 22, 'Dak-PV', 'pt')
+        + t(12, 56, fW(pv), 'pb')
+        + t(12, 80, pvSub, 'ps')
+        // Net
+        + box(0, 125, 150, 120, 'net')
+        + t(12, 147, CFG.netLabel, 'pt')
+        + t(12, 178, fW(net), 'pb')
+        + t(12, 198, netTxt, 'ps')
+        + phases
+        // Schuur-PV (optioneel)
+        + (hasSchuur
+            ? box(0, 300, 150, 100, 'pv')
+              + t(12, 322, 'Schuur-PV', 'pt')
+              + t(12, 356, fW(sch), 'pb')
+              + t(12, 380, Number.isNaN(sch) ? 'nog geen meting' : 'Growatt · CT2', 'ps')
+            : '')
+        // H3X omvormer
+        + box(185, 0, 150, 130, 'h3x')
+        + t(197, 22, 'H3X omvormer', 'pt')
+        + t(197, 52, acTxt, 'pb')
+        + t(197, 74, `AC ${fW(ac)}`, 'ps')
+        + t(197, 96, `EMS: ${ems}`, 'ps')
+        + t(197, 116, `Heatsink ${f1(tempC, ' °C')}`, 'ps')
+        // Batterij
+        + box(185, 160, 150, 120, 'bat') + batFill
+        + t(197, 182, 'Batterij', 'pt')
+        + t(197, 216, Number.isNaN(soc) ? '—' : `${Math.round(soc)} %`, 'pb2')
+        + t(197, 238, `${batTxt} · ${f1(kwh / (CFG.batKwh ? (unit(CFG.batKwh, 'kWh') === 'Wh' ? 1000 : 1) : 1), ' kWh')}`, 'ps')
+        + t(197, 266, `${f1(num(CFG.batV), ' V')} · ${f1(Math.abs(num(CFG.batA)), ' A')} · ${fW(batP)}`, 'ps')
+        // Huis
+        + box(395, 0, 125, H, 'huis')
+        + t(407, 22, 'Huis', 'pt')
+        + t(407, 56, fW(huis), 'pb')
+        + t(407, 78, 'Totale load', 'ps');
+
+      return `<svg viewBox="-2 -2 524 ${H + 4}" style="width:100%;max-width:620px;display:block;margin:0 auto" xmlns="http://www.w3.org/2000/svg">
+        <defs>${defs}</defs>${rail}${lines}${blocks}</svg>`;
+    ]]]
