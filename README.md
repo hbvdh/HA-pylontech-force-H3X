@@ -40,6 +40,10 @@ This integration pulls comprehensive data from both the Inverter and the interna
 * **🧠 BMS (Internal):** Cell Voltage Max/Min, BMS Temperature, BMS SOC, State of Health (SOH), and total battery cycles.
 * **🛠️ Status:** Inverter Status, Battery Status, and internal temperatures.
 
+## 📈 Dashboard: power flow card
+
+An optional animated power flow card (PV, grid, battery, H3X and house, with arrows showing the direction of each flow) is available as a ready-made [button-card](https://github.com/custom-cards/button-card) configuration. See [docs/dashboard/power-flow-card](docs/dashboard/power-flow-card/README.md).
+
 ---
 
 ## ⚠️ Important Note: Charge & Discharge Control
