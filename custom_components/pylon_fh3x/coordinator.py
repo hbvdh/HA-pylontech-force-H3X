@@ -51,10 +51,14 @@ BACKOFF_INTERVAL_S = 60
 # Safety rules for each optional block:
 # - one attempt, no retry;
 # - a Modbus exception reply (register not supported) counts as a failure,
-#   without reconnecting; after OPTIONAL_MAX_FAILURES the block is switched off;
-# - NO answer (timeout / connection error) switches the block off at once,
-#   because an unanswered request is what confuses the dongle;
-# - a switched-off block stays off until Home Assistant restarts;
+#   without reconnecting; after OPTIONAL_MAX_FAILURES refusals in a row the
+#   block is switched off until Home Assistant restarts (firmware without it);
+# - NO answer (timeout / connection error) pauses the block at once for
+#   OPTIONAL_PAUSE_S, because an unanswered request is what confuses the
+#   dongle; after the pause one new attempt is made, and a success resumes
+#   the normal interval;
+# - while a block is paused or switched off its cached values are dropped, so
+#   its sensors show unknown instead of a stale value;
 # - optional failures never count towards the bad-poll backoff;
 # - optional reads are skipped in any poll where a normal read failed.
 ENABLE_OPTIONAL_READS = True   # master switch: False = all optional reads off
@@ -82,6 +86,8 @@ READ_MONITOR_EXT = 0           # 30626/34  extended bits, AC-coupled PV (newer f
 # always logged at WARNING.
 
 OPTIONAL_MAX_FAILURES = 3
+# Pause after an unanswered optional read before the next single attempt.
+OPTIONAL_PAUSE_S = 3600
 
 IDENTITY_BLOCK = (30010, 31, 2)
 DEVICE_INFO_EXT_BLOCK = (30036, 43, 2)
@@ -301,6 +307,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
         self._optional_disabled: set[int] = set()
         self._optional_next_read: dict[int, float] = {}
         self._slow_values: dict = {}
+        self._optional_keys: dict[int, set] = {}  # value keys per block
 
         super().__init__(
             hass,
@@ -339,11 +346,12 @@ class PylontechCoordinator(DataUpdateCoordinator):
         """Read an optional block once; never retry or reconnect on a refusal.
 
         A Modbus exception reply (e.g. illegal address on older firmware) only
-        counts a failure. A timeout or connection error closes the connection,
-        exactly like the normal read path, because a late reply could otherwise
-        be taken for the answer to the next request. After OPTIONAL_MAX_FAILURES
-        failures in a row the block is disabled until Home Assistant restarts.
-        Failures here never count towards the bad-poll backoff.
+        counts a failure; after OPTIONAL_MAX_FAILURES in a row the block is
+        disabled until Home Assistant restarts. A timeout or connection error
+        closes the connection, exactly like the normal read path, because a
+        late reply could otherwise be taken for the answer to the next request,
+        and pauses the block for OPTIONAL_PAUSE_S. Either way the block's cached
+        values are dropped. Failures never count towards the bad-poll backoff.
         """
         address, count, slave = block
         if not self._optional_due(block):
@@ -390,6 +398,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
                 error = f"decode error: {err}"
             else:
                 self._optional_failures[address] = 0
+                self._optional_keys[address] = set(values)
                 _LOGGER.debug(
                     "Optional read %s/%s (Slave %s): OK in %.2f s",
                     address, count, slave, duration,
@@ -398,14 +407,24 @@ class PylontechCoordinator(DataUpdateCoordinator):
 
         failures = self._optional_failures.get(address, 0) + 1
         self._optional_failures[address] = failures
-        disable = no_answer or failures >= OPTIONAL_MAX_FAILURES
-        if disable:
+        if no_answer:
+            self._optional_failures[address] = 0
+            self._optional_next_read[address] = started + max(
+                OPTIONAL_PAUSE_S, block_interval(block)
+            )
+            outcome = f"; block paused for {OPTIONAL_PAUSE_S // 60} min"
+        elif failures >= OPTIONAL_MAX_FAILURES:
             self._optional_disabled.add(address)
+            outcome = "; block switched off until Home Assistant restarts"
+        else:
+            outcome = f"; attempt {failures}/{OPTIONAL_MAX_FAILURES}"
+        if no_answer or address in self._optional_disabled:
+            # No stale values: the sensors of this block go to unknown.
+            for key in self._optional_keys.pop(address, ()):
+                self._slow_values.pop(key, None)
         _LOGGER.warning(
             "Optional read %s/%s (Slave %s): FAILED in %.2f s (%s)%s",
-            address, count, slave, duration, error,
-            "; block switched off until Home Assistant restarts"
-            if disable else f"; attempt {failures}/{OPTIONAL_MAX_FAILURES}",
+            address, count, slave, duration, error, outcome,
         )
         return None
 

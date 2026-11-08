@@ -188,14 +188,59 @@ class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
         for address in OPTIONAL_ADDRESSES:
             self.assertNotIn(address, self.calls)
 
-    async def test_unanswered_block_is_switched_off_after_one_timeout(self):
+    async def test_unanswered_block_is_paused_then_retried(self):
+        pause = coordinator_module.OPTIONAL_PAUSE_S
         self.silent.add(30626)
         for _ in range(POLLS_PER_SLOW_READ * 3):
             data = await self.poll()
         self.assertEqual(self.calls.count(30626), 1)
-        self.assertIn(30626, self.coordinator._optional_disabled)
+        self.assertNotIn(30626, self.coordinator._optional_disabled)
         self.assertEqual(self.coordinator._bad_polls, 0)
         self.assertIn("battery_soc", data)
+        # still paused just before the pause ends
+        while self.now + 5 < 5 + pause:
+            await self.poll()
+        self.assertEqual(self.calls.count(30626), 1)
+        # one new attempt after the pause; it answers, normal interval resumes
+        self.silent.discard(30626)
+        data = await self.poll()
+        self.assertEqual(self.calls.count(30626), 2)
+        self.assertEqual(data["acc_power_total"], -850)
+        for _ in range(POLLS_PER_SLOW_READ):
+            await self.poll()
+        self.assertEqual(self.calls.count(30626), 3)
+
+    async def test_paused_block_drops_its_cached_values(self):
+        data = await self.poll()
+        self.assertEqual(data["fault_bits"], 0b10)
+        self.assertEqual(data["firmware_update_state"], 0)
+        self.silent.add(30148)
+        for _ in range(POLLS_PER_SLOW_READ):
+            data = await self.poll()
+        self.assertEqual(self.calls.count(30148), 2)
+        self.assertNotIn("fault_bits", data)
+        self.assertNotIn("warning_bits", data)
+        self.assertNotIn("firmware_update_state", data)
+        # other blocks keep their values
+        self.assertEqual(data["grid_import_power_limit"], 7000)
+
+    async def test_disabled_block_drops_its_cached_values(self):
+        data = await self.poll()
+        self.assertEqual(data["grid_import_power_limit"], 7000)
+        self.refused.add(40937)
+        for _ in range(POLLS_PER_SLOW_READ * coordinator_module.OPTIONAL_MAX_FAILURES):
+            data = await self.poll()
+        self.assertIn(40937, self.coordinator._optional_disabled)
+        self.assertNotIn("grid_import_power_limit", data)
+        self.assertEqual(data["fault_bits"], 0b10)
+
+    async def test_single_refusal_keeps_the_cached_value(self):
+        await self.poll()
+        self.refused.add(40937)
+        for _ in range(POLLS_PER_SLOW_READ):
+            data = await self.poll()
+        self.assertEqual(self.calls.count(40937), 2)
+        self.assertEqual(data["grid_import_power_limit"], 7000)
 
     async def test_blocks_have_their_own_interval(self):
         with patch.object(coordinator_module, "READ_SITE_LIMIT", 300):
