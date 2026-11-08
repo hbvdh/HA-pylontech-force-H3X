@@ -116,3 +116,11 @@ def issues_state(issues: list[str]) -> str:
     if len(text) > MAX_STATE_LENGTH:
         text = text[: MAX_STATE_LENGTH - 3] + "..."
     return text
+
+
+# PCS 30152 Firmware Update State (Modbus protocol V1.2).
+FIRMWARE_UPDATE_STATE_MAP = {
+    0: "Idle",
+    1: "Download finished",
+    2: "Update finished",
+}

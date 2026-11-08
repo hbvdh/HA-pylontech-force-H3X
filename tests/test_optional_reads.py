@@ -16,10 +16,12 @@ from test_coordinator import (
 )
 
 
-ALL_SWITCHES = (
-    "READ_IDENTITY", "READ_DEVICE_INFO_EXT", "READ_BMS_DEVICE_INFO",
-    "READ_FAULT_BITS", "READ_SITE_LIMIT", "READ_MONITOR_EXT",
-)
+# Intervals used in these tests: static info hourly, slow blocks every 30 s.
+TEST_INTERVALS = {
+    "READ_IDENTITY": 3600, "READ_DEVICE_INFO_EXT": 3600, "READ_BMS_DEVICE_INFO": 3600,
+    "READ_FAULT_BITS": 30, "READ_SITE_LIMIT": 30, "READ_MONITOR_EXT": 30,
+}
+POLLS_PER_SLOW_READ = 6  # 6 polls x 5 s = 30 s
 OPTIONAL_ADDRESSES = (30010, 30036, 0x1000, 30148, 30626, 40937)
 
 
@@ -69,13 +71,15 @@ class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
         self.now = 0
         self.coordinator.client.read_holding_registers.side_effect = self.response
         switches = [
-            patch.object(coordinator_module, name, True)
-            for name in ALL_SWITCHES
+            patch.object(coordinator_module, name, value)
+            for name, value in TEST_INTERVALS.items()
         ]
+        clock = SimpleNamespace(monotonic=lambda: self.now)
         for patcher in (
             *switches,
             patch.object(coordinator_module.asyncio, "sleep", new=AsyncMock()),
-            patch.object(validation_module, "time", SimpleNamespace(monotonic=lambda: self.now)),
+            patch.object(validation_module, "time", clock),
+            patch.object(coordinator_module, "time", clock),
             patch.object(validation_module._LOGGER, "warning"),
             patch.object(coordinator_module._LOGGER, "warning"),
         ):
@@ -96,6 +100,16 @@ class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
         data = await self.coordinator._async_update_data()
         self.coordinator.data = data
         return data
+
+    async def test_identity_is_reread_after_its_interval(self):
+        for _ in range(3600 // 5):
+            await self.poll()
+        self.assertEqual(self.calls.count(30010), 1)
+        self.assertEqual(self.calls.count(0x1000), 1)
+        await self.poll()
+        self.assertEqual(self.calls.count(30010), 2)
+        self.assertEqual(self.calls.count(30036), 2)
+        self.assertEqual(self.calls.count(0x1000), 2)
 
     async def test_identity_is_read_once_and_builds_device_info(self):
         await self.poll()
@@ -118,8 +132,8 @@ class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["fault_code"], 0)
         self.assertEqual(data["warning_code"], 0)
 
-    async def test_slow_values_are_read_every_n_polls_and_cached(self):
-        for _ in range(coordinator_module.SLOW_POLL_EVERY):
+    async def test_slow_values_are_read_per_interval_and_cached(self):
+        for _ in range(POLLS_PER_SLOW_READ):
             data = await self.poll()
             self.assertEqual(data["acc_power_total"], -850)
             self.assertEqual(data["acc_power_s"], -850)
@@ -133,7 +147,7 @@ class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
     async def test_refused_block_is_disabled_and_never_triggers_backoff(self):
         self.refused.add(30626)
         interval = self.coordinator.update_interval
-        for _ in range(coordinator_module.SLOW_POLL_EVERY * 5):
+        for _ in range(POLLS_PER_SLOW_READ * 5):
             data = await self.poll()
             self.assertIn("battery_soc", data)
         # three attempts, then switched off until restart
@@ -157,24 +171,31 @@ class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_master_switch_disables_all_optional_reads(self):
         with patch.object(coordinator_module, "ENABLE_OPTIONAL_READS", False):
-            for _ in range(coordinator_module.SLOW_POLL_EVERY):
+            for _ in range(POLLS_PER_SLOW_READ):
                 await self.poll()
         for address in OPTIONAL_ADDRESSES:
             self.assertNotIn(address, self.calls)
 
     async def test_unanswered_block_is_switched_off_after_one_timeout(self):
         self.silent.add(30626)
-        for _ in range(coordinator_module.SLOW_POLL_EVERY * 3):
+        for _ in range(POLLS_PER_SLOW_READ * 3):
             data = await self.poll()
         self.assertEqual(self.calls.count(30626), 1)
         self.assertIn(30626, self.coordinator._optional_disabled)
         self.assertEqual(self.coordinator._bad_polls, 0)
         self.assertIn("battery_soc", data)
 
-    async def test_each_block_has_its_own_switch(self):
-        with patch.object(coordinator_module, "READ_MONITOR_EXT", False), \
-                patch.object(coordinator_module, "READ_BMS_DEVICE_INFO", False):
-            for _ in range(coordinator_module.SLOW_POLL_EVERY + 1):
+    async def test_blocks_have_their_own_interval(self):
+        with patch.object(coordinator_module, "READ_SITE_LIMIT", 300):
+            for _ in range(300 // 5):
+                await self.poll()
+        self.assertEqual(self.calls.count(30148), 10)
+        self.assertEqual(self.calls.count(40937), 1)
+
+    async def test_each_block_can_be_switched_off(self):
+        with patch.object(coordinator_module, "READ_MONITOR_EXT", 0), \
+                patch.object(coordinator_module, "READ_BMS_DEVICE_INFO", 0):
+            for _ in range(POLLS_PER_SLOW_READ + 1):
                 await self.poll()
         self.assertNotIn(30626, self.calls)
         self.assertNotIn(0x1000, self.calls)
@@ -184,9 +205,15 @@ class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
 
 
 class DefaultsTests(unittest.IsolatedAsyncioTestCase):
-    async def test_all_optional_blocks_are_off_by_default(self):
-        for name in ALL_SWITCHES:
-            self.assertFalse(getattr(coordinator_module, name), name)
+    def test_default_intervals(self):
+        self.assertEqual(coordinator_module.READ_IDENTITY, 3600)
+        self.assertEqual(coordinator_module.READ_DEVICE_INFO_EXT, 3600)
+        self.assertEqual(coordinator_module.READ_BMS_DEVICE_INFO, 3600)
+        self.assertEqual(coordinator_module.READ_FAULT_BITS, 300)
+        self.assertEqual(coordinator_module.READ_SITE_LIMIT, 300)
+        self.assertEqual(coordinator_module.READ_MONITOR_EXT, 0)
+
+    async def test_monitor_ext_is_off_by_default(self):
         coordinator = coordinator_module.PylontechCoordinator(None, "test", 502)
         coordinator.use_single_block_read = False
         blocks = valid_blocks()
@@ -199,10 +226,11 @@ class DefaultsTests(unittest.IsolatedAsyncioTestCase):
         coordinator.client.read_holding_registers.side_effect = response
         with patch.object(coordinator_module.asyncio, "sleep", new=AsyncMock()), \
                 patch.object(coordinator_module._LOGGER, "warning"):
-            for _ in range(coordinator_module.SLOW_POLL_EVERY):
+            for _ in range(POLLS_PER_SLOW_READ):
                 await coordinator._async_update_data()
-        for address in OPTIONAL_ADDRESSES:
-            self.assertNotIn(address, calls)
+        self.assertNotIn(30626, calls)
+        self.assertIn(30148, calls)
+        self.assertIn(40937, calls)
 
 
 class AlarmDecodeTests(unittest.TestCase):

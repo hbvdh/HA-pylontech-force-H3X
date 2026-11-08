@@ -21,7 +21,14 @@ from homeassistant.const import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .alarms import PCS_FAULTS, PCS_WARNINGS, active_issues, combined_bits, issues_state
+from .alarms import (
+    FIRMWARE_UPDATE_STATE_MAP,
+    PCS_FAULTS,
+    PCS_WARNINGS,
+    active_issues,
+    combined_bits,
+    issues_state,
+)
 from .device import device_info
 from .const import DOMAIN, MANUFACTURER, MODEL
 
@@ -318,8 +325,8 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
 )
 
 
-# --- Optional reads: AC-coupled PV / third-party meter, codes, limits ---------
-OPTIONAL_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
+# --- Optional 30626 block: AC-coupled PV (only when READ_MONITOR_EXT is on) ---
+ACC_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
     SensorEntityDescription(
         key="acc_power_total", name="AC Coupled PV Power",
         native_unit_of_measurement=UnitOfPower.WATT,
@@ -336,6 +343,10 @@ OPTIONAL_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         )
         for phase in "rst"
     ),
+)
+
+# --- Optional reads: third-party meter, codes, limits -------------------------
+OPTIONAL_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
     SensorEntityDescription(
         key="third_party_meter_power", name="Third Party Meter Power",
         native_unit_of_measurement=UnitOfPower.WATT,
@@ -363,13 +374,15 @@ OPTIONAL_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         key="warning_code", name="Warning Code",
         entity_category=EntityCategory.DIAGNOSTIC, icon="mdi:alert-outline",
     ),
-    SensorEntityDescription(
-        key="firmware_update_state", name="Firmware Update State",
-        entity_category=EntityCategory.DIAGNOSTIC, icon="mdi:update",
-    ),
 )
 
-# --- Static device information (read once at startup) ------------------------
+
+# --- Static device information (re-read hourly) -----------------------------
+FIRMWARE_UPDATE_STATE_SENSOR = SensorEntityDescription(
+    key="firmware_update_state", name="Firmware Update State",
+    entity_category=EntityCategory.DIAGNOSTIC, icon="mdi:update",
+)
+
 IDENTITY_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
     SensorEntityDescription(
         key="pcs_software_version", name="PCS Software Version",
@@ -417,10 +430,18 @@ async def async_setup_entry(
     coordinator = hass.data[DOMAIN][entry.entry_id]
 
     # Maak voor elke definitie hierboven een PylontechSensor object aan
+    descriptions = SENSOR_TYPES + OPTIONAL_SENSOR_TYPES
+    # AC-coupled PV only exists when the 30626 block is read; otherwise these
+    # sensors would stay empty.
+    if getattr(coordinator, "ac_coupled_pv_enabled", False):
+        descriptions += ACC_SENSOR_TYPES
     entities = [
         PylontechSensor(coordinator, description, entry)
-        for description in SENSOR_TYPES + OPTIONAL_SENSOR_TYPES
+        for description in descriptions
     ]
+    entities.append(
+        PylontechFirmwareStateSensor(coordinator, FIRMWARE_UPDATE_STATE_SENSOR, entry)
+    )
     entities += [
         PylontechIdentitySensor(coordinator, description, entry)
         for description in IDENTITY_SENSOR_TYPES
@@ -461,8 +482,27 @@ class PylontechSensor(CoordinatorEntity, SensorEntity):
         return self.coordinator.data.get(self.entity_description.key)
 
 
+class PylontechFirmwareStateSensor(PylontechSensor):
+    """Firmware update state (30152) as text, raw value as attribute."""
+
+    @property
+    def _raw(self):
+        return (self.coordinator.data or {}).get(self.entity_description.key)
+
+    @property
+    def native_value(self):
+        raw = self._raw
+        if raw is None:
+            return None
+        return FIRMWARE_UPDATE_STATE_MAP.get(raw, f"Unknown ({raw})")
+
+    @property
+    def extra_state_attributes(self):
+        return {"code": self._raw}
+
+
 class PylontechIdentitySensor(PylontechSensor):
-    """Static device information read once at startup."""
+    """Static device information (re-read hourly to catch firmware updates)."""
 
     @property
     def native_value(self):

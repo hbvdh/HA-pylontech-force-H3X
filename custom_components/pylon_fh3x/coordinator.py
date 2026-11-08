@@ -46,8 +46,7 @@ BACKOFF_INTERVAL_S = 60
 # ---------------------------------------------------------------------------
 # Optional extra reads (device info, faults, AC-coupled PV, grid import limit)
 # ---------------------------------------------------------------------------
-# Every optional block has its own switch below and is OFF by default.
-# Switch them on one at a time and watch the log between steps.
+# Every optional block has its own read interval below (0 = off).
 #
 # Safety rules for each optional block:
 # - one attempt, no retry;
@@ -60,23 +59,29 @@ BACKOFF_INTERVAL_S = 60
 # - optional reads are skipped in any poll where a normal read failed.
 ENABLE_OPTIONAL_READS = True   # master switch: False = all optional reads off
 
-# Read once at startup (static device information).
-READ_IDENTITY = False          # 30010/31  manufacturer, model, serial
-READ_DEVICE_INFO_EXT = False   # 30036/43  PCS / AFCI firmware, rated power
-READ_BMS_DEVICE_INFO = False   # 0x1000/31 (BMS, slave 1) BMS main / HMI version
+# Per block: interval in seconds between reads, 0 = off. The first read happens
+# in the first healthy poll, after that at most once per interval. Longer
+# intervals keep the bus free for the normal 5 s polls.
 
-# Read every SLOW_POLL_EVERY polls.
-READ_FAULT_BITS = False        # 30148/5   fault bits, warning bits, fw update state
-READ_SITE_LIMIT = False        # 40937/2   grid import power limit
-READ_MONITOR_EXT = False       # 30626/34  extended bits, AC-coupled PV (newer firmware)
+# Static device information: re-read hourly to pick up a firmware update.
+READ_IDENTITY = 3600           # 30010/31  manufacturer, model, serial
+READ_DEVICE_INFO_EXT = 3600    # 30036/43  PCS / AFCI firmware, rated power
+READ_BMS_DEVICE_INFO = 3600    # 0x1000/31 (BMS, slave 1) BMS main / HMI version
+
+# Settings and status. Fault/warning codes already come every 5 s with the
+# 30100 block; these bits only tell which fault, so 5 minutes is enough.
+READ_FAULT_BITS = 300          # 30148/5   fault bits, warning bits, fw update state
+READ_SITE_LIMIT = 300          # 40937/2   grid import power limit
+
+# Off: AC-coupled PV is covered by the third-party meter in the 30100 block.
+# Fallback for the Growatt test; this block confused the dongle in a first test.
+READ_MONITOR_EXT = 0           # 30626/34  extended bits, AC-coupled PV (newer firmware)
 
 # Log every optional read (address, result, duration) at WARNING level, so the
 # last request before any dongle problem is visible in the normal HA log.
 LOG_OPTIONAL_READS = True
 
 OPTIONAL_MAX_FAILURES = 3
-# Slow blocks are read every SLOW_POLL_EVERY polls (5 s x 6 = every 30 s).
-SLOW_POLL_EVERY = 6
 
 IDENTITY_BLOCK = (30010, 31, 2)
 DEVICE_INFO_EXT_BLOCK = (30036, 43, 2)
@@ -86,9 +91,14 @@ SITE_LIMIT_BLOCK = (40937, 2, 2)
 MONITOR_EXT_BLOCK = (30626, 34, 2)
 
 
-def _block_enabled(block) -> bool:
-    """Per-block switch, looked up at call time so tests can patch it."""
-    switch = {
+def block_interval(block) -> int:
+    """Read interval in seconds for a block, 0 = off.
+
+    Looked up at call time so tests can patch the settings above.
+    """
+    if not ENABLE_OPTIONAL_READS:
+        return 0
+    setting = {
         IDENTITY_BLOCK[0]: "READ_IDENTITY",
         DEVICE_INFO_EXT_BLOCK[0]: "READ_DEVICE_INFO_EXT",
         BMS_DEVICE_INFO_BLOCK[0]: "READ_BMS_DEVICE_INFO",
@@ -96,7 +106,7 @@ def _block_enabled(block) -> bool:
         SITE_LIMIT_BLOCK[0]: "READ_SITE_LIMIT",
         MONITOR_EXT_BLOCK[0]: "READ_MONITOR_EXT",
     }.get(block[0])
-    return ENABLE_OPTIONAL_READS and bool(switch and globals()[switch])
+    return max(0, int(globals()[setting])) if setting else 0
 
 
 _GRID_PHASE_KEYS = (
@@ -287,12 +297,10 @@ class PylontechCoordinator(DataUpdateCoordinator):
 
         # Optional reads: static device info, slow blocks and their cache.
         self.device_identity: dict = {}
-        self._identity_done = False
-        self._bms_identity_done = False
         self._optional_failures: dict[int, int] = {}
         self._optional_disabled: set[int] = set()
+        self._optional_next_read: dict[int, float] = {}
         self._slow_values: dict = {}
-        self._poll_count = 0
 
         super().__init__(
             hass,
@@ -314,6 +322,19 @@ class PylontechCoordinator(DataUpdateCoordinator):
         await asyncio.sleep(delay)
         self._last_modbus_slave = slave
 
+    @property
+    def ac_coupled_pv_enabled(self) -> bool:
+        """True when the 30626 block (AC-coupled PV) is read at all."""
+        return block_interval(MONITOR_EXT_BLOCK) > 0
+
+    def _optional_due(self, block) -> bool:
+        """True when a block is on, not switched off, and its interval passed."""
+        address = block[0]
+        if block_interval(block) <= 0 or address in self._optional_disabled:
+            return False
+        next_read = self._optional_next_read.get(address)
+        return next_read is None or time.monotonic() >= next_read
+
     async def _read_optional(self, block, decode) -> dict | None:
         """Read an optional block once; never retry or reconnect on a refusal.
 
@@ -325,13 +346,16 @@ class PylontechCoordinator(DataUpdateCoordinator):
         Failures here never count towards the bad-poll backoff.
         """
         address, count, slave = block
-        if not _block_enabled(block) or address in self._optional_disabled:
+        if not self._optional_due(block):
             return None
 
         error = None
         registers = None
         no_answer = False
         started = time.monotonic()
+        # Next attempt one interval from now, also after a failure, so a
+        # refusing block is not hammered every poll.
+        self._optional_next_read[address] = started + block_interval(block)
         async with self._modbus_lock:
             try:
                 if not self.client.connected:
@@ -890,9 +914,9 @@ class PylontechCoordinator(DataUpdateCoordinator):
             # Optional PCS (slave 2) reads, still before switching to slave 1.
             # Skipped entirely when a normal read already failed this poll, so a
             # struggling dongle never gets extra requests.
-            optional_ok = self._failed_reads_this_poll == 0
-            if optional_ok and not self._identity_done:
-                self._identity_done = True
+            # Each block is read only when its own interval has passed.
+            if self._failed_reads_this_poll == 0:
+                identity_changed = False
                 for block, decode in (
                     (IDENTITY_BLOCK, decode_identity),
                     (DEVICE_INFO_EXT_BLOCK, decode_device_info_ext),
@@ -900,9 +924,9 @@ class PylontechCoordinator(DataUpdateCoordinator):
                     values = await self._read_optional(block, decode)
                     if values:
                         self.device_identity.update(values)
-                self._push_device_info()
-            self._poll_count += 1
-            if optional_ok and self._poll_count % SLOW_POLL_EVERY == 1:
+                        identity_changed = True
+                if identity_changed:
+                    self._push_device_info()
                 for block, decode in (
                     (FAULT_BITS_BLOCK, decode_fault_bits),
                     (MONITOR_EXT_BLOCK, decode_monitor_ext),
@@ -936,10 +960,9 @@ class PylontechCoordinator(DataUpdateCoordinator):
                 data["bms_cell_voltage_min"] = get_16bit_uint(r_bms, 14) * 0.001
                 data["bms_soh"] = get_16bit_uint(r_bms, 29)
 
-            # Optional BMS (slave 1) device info, once, after the normal BMS read
-            # so the slave only switches once per poll.
-            if self._failed_reads_this_poll == 0 and not self._bms_identity_done:
-                self._bms_identity_done = True
+            # Optional BMS (slave 1) device info, after the normal BMS read so
+            # the slave only switches once per poll.
+            if self._failed_reads_this_poll == 0:
                 values = await self._read_optional(
                     BMS_DEVICE_INFO_BLOCK, decode_bms_device_info
                 )

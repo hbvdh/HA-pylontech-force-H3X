@@ -82,3 +82,35 @@ class SensorTests(unittest.TestCase):
         self.assertIsNone(sensor.native_value)
         coordinator.data = {"total_grid_import": 2025.53}
         self.assertEqual(sensor.native_value, 2025.53)
+
+    def test_firmware_update_state_is_text_with_raw_code(self):
+        platform = load_sensor()
+        coordinator = SimpleNamespace(data={"firmware_update_state": 2})
+        entry = SimpleNamespace(data={"host": "test"}, entry_id="test", title="Test")
+        sensor = platform.PylontechFirmwareStateSensor(
+            coordinator, platform.FIRMWARE_UPDATE_STATE_SENSOR, entry
+        )
+        self.assertEqual(sensor.native_value, "Update finished")
+        self.assertEqual(sensor.extra_state_attributes, {"code": 2})
+        coordinator.data = {"firmware_update_state": 0}
+        self.assertEqual(sensor.native_value, "Idle")
+        coordinator.data = {"firmware_update_state": 7}
+        self.assertEqual(sensor.native_value, "Unknown (7)")
+        coordinator.data = {}
+        self.assertIsNone(sensor.native_value)
+
+    def test_ac_coupled_sensors_only_when_block_is_read(self):
+        import asyncio
+
+        platform = load_sensor()
+        entry = SimpleNamespace(data={"host": "test"}, entry_id="e1", title="Test")
+        for enabled in (False, True):
+            coordinator = SimpleNamespace(data={}, ac_coupled_pv_enabled=enabled)
+            hass = SimpleNamespace(data={platform.DOMAIN: {"e1": coordinator}})
+            added = []
+            asyncio.run(platform.async_setup_entry(hass, entry, added.extend))
+            keys = {entity.entity_description.key for entity in added}
+            with self.subTest(enabled=enabled):
+                self.assertEqual("acc_power_total" in keys, enabled)
+                self.assertIn("third_party_meter_power", keys)
+                self.assertIn("firmware_update_state", keys)
