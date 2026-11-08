@@ -1,4 +1,4 @@
-"""Binary sensor platform for Pylontech Force H3X (inverter problem)."""
+"""Binary sensor platform for Pylontech Force H3X (inverter problem, EPS)."""
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
@@ -19,9 +19,12 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the inverter problem binary sensor."""
+    """Set up the inverter problem and EPS enabled binary sensors."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([PylontechProblemSensor(coordinator, entry)])
+    async_add_entities([
+        PylontechProblemSensor(coordinator, entry),
+        PylontechEpsEnabledSensor(coordinator, entry),
+    ])
 
 
 class PylontechProblemSensor(CoordinatorEntity, BinarySensorEntity):
@@ -54,3 +57,22 @@ class PylontechProblemSensor(CoordinatorEntity, BinarySensorEntity):
             "fault_code": data.get("fault_code"),
             "active_faults": active_issues(bits, PCS_FAULTS) if bits is not None else [],
         }
+
+
+class PylontechEpsEnabledSensor(CoordinatorEntity, BinarySensorEntity):
+    """EPS (backup) output enabled in the inverter settings (40904, read-only)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "EPS Enabled"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:power-plug-battery"
+
+    def __init__(self, coordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{DOMAIN}_{entry.data['host']}_eps_enabled"
+        self._attr_device_info = device_info(coordinator, entry)
+
+    @property
+    def is_on(self) -> bool | None:
+        value = (self.coordinator.data or {}).get("eps_enable")
+        return None if value is None else bool(value)

@@ -30,6 +30,9 @@ VALUE_RANGES = {
     "ac_total_power": (-INVERTER_POWER_LIMIT, INVERTER_POWER_LIMIT),
     "battery_power": (-INVERTER_POWER_LIMIT, INVERTER_POWER_LIMIT),
     "eps_power": (-INVERTER_POWER_LIMIT, INVERTER_POWER_LIMIT),
+    "eps_voltage": (0, 350),
+    "eps_frequency": (0, 70),
+    "eps_enable": (0, 1),
     "grid_total_power": (-GRID_POWER_LIMIT, GRID_POWER_LIMIT),
     "pv_total_power": (0, PV_TOTAL_POWER_LIMIT),
     "battery_voltage": (0, 1000),
@@ -77,6 +80,7 @@ COUNTER_RATES = {
     "total_battery_charge": INVERTER_POWER_LIMIT / 3_600_000,
     "total_battery_discharge": INVERTER_POWER_LIMIT / 3_600_000,
     "third_party_meter_energy": PV_POWER_LIMIT / 3_600_000,
+    "eps_output_energy": INVERTER_POWER_LIMIT / 3_600_000,
     "bms_cycles": 100 / 86400,
 }
 VALUE_RANGES.update({key: (0, 10_000_000) for key in COUNTER_RATES if key != "bms_cycles"})

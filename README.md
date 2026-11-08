@@ -39,6 +39,7 @@ This integration pulls comprehensive data from both the Inverter and the interna
 * **�🔋 Battery (Inverter perspective):** Charge/Discharge Power, Voltage, Current, SOC, and Total Charge/Discharge Energy.
 * **🧠 BMS (Internal):** Cell Voltage Max/Min, BMS Temperature, BMS SOC, State of Health (SOH), and total battery cycles.
 * **🛠️ Status:** Inverter Status, Battery Status, and internal temperatures.
+* **🔋 EPS (backup) output:** EPS Voltage, Frequency, Power and Output Energy (registers 30170–30181), plus EPS Enabled (diagnostic, read-only, register 40904). All come from blocks that are already read every poll, so no extra Modbus requests.
 * **🔌 AC-coupled PV / third-party meter:** Third Party Meter Power and Energy (registers 30110/30112, CT2 of a DTSU666-6CT or similar). Optionally AC Coupled PV Power (total, and per phase R/S/T) from register block 30626, off by default.
 * **🚨 Faults & warnings (diagnostic):** Inverter Problem (binary), Inverter Faults and Inverter Warnings as readable text with the raw bits as attributes, Fault Code, Warning Code, Firmware Update State.
 * **🏷️ Device information:** model, serial number, PCS firmware and BMS/HMI version on the device page, plus diagnostic sensors for the PCS, AFCI, BMS and HMI versions and the PCS rated output power.

@@ -888,7 +888,10 @@ class PylontechCoordinator(DataUpdateCoordinator):
                 data["battery_power"] = get_32bit_int(r_inverter_battery, 6)
                 data["battery_voltage"] = get_16bit_uint(r_inverter_battery, 8) * 0.1
                 data["battery_current"] = get_16bit_int(r_inverter_battery, 9) * 0.1
-                data["eps_power"] = get_32bit_int(r_inverter_battery, 16)
+                data["eps_voltage"] = get_16bit_uint(r_inverter_battery, 14) * 0.1   # 30170
+                data["eps_frequency"] = get_16bit_uint(r_inverter_battery, 15) * 0.01  # 30171
+                data["eps_power"] = get_32bit_int(r_inverter_battery, 16)              # 30172
+                data["eps_output_energy"] = get_32bit_float(r_inverter_battery, 24)    # 30180
                 data["total_battery_charge"] = get_32bit_float(r_inverter_battery, 18)
                 data["total_battery_discharge"] = get_32bit_float(r_inverter_battery, 20)
                 data["battery_soc"] = get_16bit_uint(r_inverter_battery, 26)
@@ -922,6 +925,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
                 data["charge_discharge_power"] = get_16bit_int(r_ems, 0)
                 data["charge_limit_soc"] = get_16bit_uint(r_ems, 1)
                 data["discharge_limit_soc"] = get_16bit_uint(r_ems, 2)
+                data["eps_enable"] = get_16bit_uint(r_ems, 3)                          # 40904
                 data["ems_mode"] = str(get_16bit_uint(r_ems, 6))
                 data["period_1"] = get_16bit_uint(r_ems, 7)
                 data["period_2"] = get_16bit_uint(r_ems, 13)
