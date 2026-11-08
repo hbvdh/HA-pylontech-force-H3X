@@ -32,10 +32,10 @@ from .alarms import (
 from .device import device_info
 from .const import DOMAIN, MANUFACTURER, MODEL
 
-# Hier definiëren we alle sensoren. De 'key' moet exact overeenkomen 
-# met de naam die we in coordinator.py aan de data dictionary hebben gegeven!
+# All sensors are defined here. Each 'key' must match exactly the key
+# coordinator.py uses in the data dictionary.
 SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
-    # --- Status Sensoren ---
+    # --- Status sensors ---
     SensorEntityDescription(
         key="inverter_status",
         name="Inverter Status",
@@ -227,7 +227,7 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
     ),
 
-    # --- Batterij (Omvormer registers) ---
+    # --- Battery (inverter registers) ---
     SensorEntityDescription(
         key="battery_power", name="Battery Power",
         native_unit_of_measurement=UnitOfPower.WATT,
@@ -308,7 +308,7 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
     ),
     
-    # --- Omvormer Algemeen ---
+    # --- Inverter general ---
     SensorEntityDescription(
         key="inverter_temperature", name="Inverter Temperature",
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
@@ -429,7 +429,7 @@ async def async_setup_entry(
     """Set up Pylontech sensor based on a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
 
-    # Maak voor elke definitie hierboven een PylontechSensor object aan
+    # Create a PylontechSensor for each description above
     descriptions = SENSOR_TYPES + OPTIONAL_SENSOR_TYPES
     # AC-coupled PV only exists when the 30626 block is read; otherwise these
     # sensors would stay empty.
@@ -469,16 +469,16 @@ class PylontechSensor(CoordinatorEntity, SensorEntity):
         super().__init__(coordinator)
         self.entity_description = description
         
-        # Zorgt voor unieke ID's in de database
+        # Unique ID in the entity registry
         self._attr_unique_id = f"{DOMAIN}_{entry.data['host']}_{description.key}"
 
-        # Dit groepeert alle sensoren onder één Apparaat in Home Assistant
+        # Groups all sensors under one device in Home Assistant
         self._attr_device_info = device_info(coordinator, entry)
 
     @property
     def native_value(self):
         """Return the state of the sensor."""
-        # Haal de waarde op uit de dictionary die we in coordinator.py hebben gebouwd
+        # Value from the data dictionary built in coordinator.py
         return self.coordinator.data.get(self.entity_description.key)
 
 
