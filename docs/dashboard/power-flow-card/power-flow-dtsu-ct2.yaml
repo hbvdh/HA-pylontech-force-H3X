@@ -111,7 +111,8 @@ custom_fields:
           return `<path d="${d}" fill="none" style="stroke:var(--divider-color);stroke-width:2;stroke-dasharray:2 5"/>`;
         }
         const back  = w < 0;
-        const speed = Math.min(160, 20 + Math.abs(w) * 0.03);   // px per seconde
+        // Snelheid in px/s: ~13 bij 25 W, ~32 bij 1 kW, max 100 (vanaf ~4,4 kW).
+        const speed = Math.min(100, 12 + Math.abs(w) * 0.02);
         const dur   = 12 / speed;
         const delay = -(now % dur);
         defs += `<marker id="pf-${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:${color}"/></marker>`;
