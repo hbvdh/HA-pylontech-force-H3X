@@ -140,13 +140,14 @@ custom_fields:
         : net > CFG.netIdle ? 'Afname' : net < -CFG.netIdle ? 'Teruglevering' : 'In balans';
       // H3X status follows the battery first: the H3X itself draws ~30-50 W from
       // AC in stand-by, which must not read as charging.
-      // Battery idle in User mode (Predbat power ref 0 %) = battery held, house on grid.
+      // EMS mode unknown/unavailable (automation did not set it) is shown as Unknown.
       const acIdle = 50;
-      const acTxt  = Number.isNaN(ac) ? '\u2014'
+      const emsUnknown = !states[CFG.ems] || ['unknown', 'unavailable'].includes(ems);
+      const acTxt  = emsUnknown ? 'Unknown'
+        : Number.isNaN(ac) ? '\u2014'
         : batP > CFG.idle ? 'Ontladen'
         : ac > acIdle ? 'Levert PV'
         : batP < -CFG.idle ? 'Opladen'
-        : /user/i.test(ems) ? 'Vasthouden'
         : 'Stand-by';
       const batTxt = Number.isNaN(batP) ? '—'
         : batP > CFG.idle ? 'Ontladen' : batP < -CFG.idle ? 'Laden' : 'Stand-by';
