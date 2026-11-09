@@ -33,6 +33,7 @@ VALUE_RANGES = {
     "eps_voltage": (0, 350),
     "eps_frequency": (0, 70),
     "eps_enable": (0, 1),
+    **{f"eps_current_{phase}": (0, 100) for phase in "rst"},
     "grid_total_power": (-GRID_POWER_LIMIT, GRID_POWER_LIMIT),
     "pv_total_power": (0, PV_TOTAL_POWER_LIMIT),
     "battery_voltage": (0, 1000),

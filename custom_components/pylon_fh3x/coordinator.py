@@ -81,6 +81,11 @@ READ_SITE_LIMIT = 300          # 40937/2   grid import power limit
 # Fallback for the Growatt test; this block confused the dongle in a first test.
 READ_MONITOR_EXT = 0           # 30626/34  extended bits, AC-coupled PV (newer firmware)
 
+# EPS (backup) output current per phase. Not in protocol V1.2; taken from the
+# Pylontech Research register map (30600-30669, newer firmware). Kept as its
+# own small block, separate from 30626. In test.
+READ_BACKUP_CURRENT = 60       # 30600/3   EPS current R/S/T
+
 # Logging: a successful optional read is logged at DEBUG (address, duration);
 # enable debug logging for the integration to see every read. A failed read is
 # always logged at WARNING.
@@ -95,6 +100,7 @@ BMS_DEVICE_INFO_BLOCK = (0x1000, 31, 1)
 FAULT_BITS_BLOCK = (30148, 5, 2)
 SITE_LIMIT_BLOCK = (40937, 2, 2)
 MONITOR_EXT_BLOCK = (30626, 34, 2)
+BACKUP_CURRENT_BLOCK = (30600, 3, 2)
 
 
 def block_interval(block) -> int:
@@ -111,6 +117,7 @@ def block_interval(block) -> int:
         FAULT_BITS_BLOCK[0]: "READ_FAULT_BITS",
         SITE_LIMIT_BLOCK[0]: "READ_SITE_LIMIT",
         MONITOR_EXT_BLOCK[0]: "READ_MONITOR_EXT",
+        BACKUP_CURRENT_BLOCK[0]: "READ_BACKUP_CURRENT",
     }.get(block[0])
     return max(0, int(globals()[setting])) if setting else 0
 
@@ -250,6 +257,15 @@ def decode_monitor_ext(regs):
     }
 
 
+def decode_backup_current(regs):
+    """PCS 30600-30602: EPS (backup) output current per phase (U16, 0.1 A)."""
+    return {
+        "eps_current_r": regs[0] * 0.1,
+        "eps_current_s": regs[1] * 0.1,
+        "eps_current_t": regs[2] * 0.1,
+    }
+
+
 def decode_site_limit(regs):
     """PCS 40937-40938: grid import power limit (U32, W)."""
     return {"grid_import_power_limit": (regs[0] << 16) | regs[1]}
@@ -328,6 +344,11 @@ class PylontechCoordinator(DataUpdateCoordinator):
 
         await asyncio.sleep(delay)
         self._last_modbus_slave = slave
+
+    @property
+    def eps_current_enabled(self) -> bool:
+        """True when the 30600 block (EPS current) is read at all."""
+        return block_interval(BACKUP_CURRENT_BLOCK) > 0
 
     @property
     def ac_coupled_pv_enabled(self) -> bool:
@@ -952,6 +973,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
                     (FAULT_BITS_BLOCK, decode_fault_bits),
                     (MONITOR_EXT_BLOCK, decode_monitor_ext),
                     (SITE_LIMIT_BLOCK, decode_site_limit),
+                    (BACKUP_CURRENT_BLOCK, decode_backup_current),
                 ):
                     values = await self._read_optional(block, decode)
                     if values:

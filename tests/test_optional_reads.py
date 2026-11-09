@@ -20,9 +20,10 @@ from test_coordinator import (
 TEST_INTERVALS = {
     "READ_IDENTITY": 3600, "READ_DEVICE_INFO_EXT": 3600, "READ_BMS_DEVICE_INFO": 3600,
     "READ_FAULT_BITS": 30, "READ_SITE_LIMIT": 30, "READ_MONITOR_EXT": 30,
+    "READ_BACKUP_CURRENT": 30,
 }
 POLLS_PER_SLOW_READ = 6  # 6 polls x 5 s = 30 s
-OPTIONAL_ADDRESSES = (30010, 30036, 0x1000, 30148, 30626, 40937)
+OPTIONAL_ADDRESSES = (30010, 30036, 0x1000, 30148, 30626, 40937, 30600)
 
 
 def ascii_regs(text, count):
@@ -53,6 +54,7 @@ def optional_blocks():
     put_int(monitor, 32, 0)
     blocks[30626] = monitor
     blocks[40937] = [0, 7000]
+    blocks[30600] = [6, 0, 0]                 # EPS current R 0.6 A
     put_int(blocks[30100], 10, -840)
     put_float(blocks[30100], 12, 12.5)
     blocks[30100][17] = 0
@@ -233,6 +235,18 @@ class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(40937, self.coordinator._optional_disabled)
         self.assertNotIn("grid_import_power_limit", data)
         self.assertEqual(data["fault_bits"], 0b10)
+
+    async def test_eps_current_is_decoded_from_its_own_block(self):
+        data = await self.poll()
+        self.assertAlmostEqual(data["eps_current_r"], 0.6, places=3)
+        self.assertEqual(data["eps_current_s"], 0)
+        self.assertIn(30600, self.calls)
+
+    async def test_eps_current_out_of_range_is_rejected(self):
+        self.blocks[30600] = [5000, 0, 0]
+        data = await self.poll()
+        self.assertNotIn("eps_current_r", data)
+        self.assertEqual(data["grid_import_power_limit"], 7000)
 
     async def test_single_refusal_keeps_the_cached_value(self):
         await self.poll()

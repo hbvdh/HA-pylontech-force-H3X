@@ -374,6 +374,20 @@ ACC_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
     ),
 )
 
+# --- Optional 30600 block: EPS current (only when READ_BACKUP_CURRENT is on) ---
+EPS_CURRENT_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = tuple(
+    SensorEntityDescription(
+        key=f"eps_current_{phase}", name=f"EPS Current {phase.upper()}",
+        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        device_class=SensorDeviceClass.CURRENT,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+        # S and T only exist on a three-phase H3X
+        entity_registry_enabled_default=(phase == "r"),
+    )
+    for phase in "rst"
+)
+
 # --- Optional reads: third-party meter, codes, limits -------------------------
 OPTIONAL_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
     SensorEntityDescription(
@@ -464,6 +478,8 @@ async def async_setup_entry(
     # sensors would stay empty.
     if getattr(coordinator, "ac_coupled_pv_enabled", False):
         descriptions += ACC_SENSOR_TYPES
+    if getattr(coordinator, "eps_current_enabled", False):
+        descriptions += EPS_CURRENT_SENSOR_TYPES
     entities = [
         PylontechSensor(coordinator, description, entry)
         for description in descriptions

@@ -105,12 +105,15 @@ class SensorTests(unittest.TestCase):
         platform = load_sensor()
         entry = SimpleNamespace(data={"host": "test"}, entry_id="e1", title="Test")
         for enabled in (False, True):
-            coordinator = SimpleNamespace(data={}, ac_coupled_pv_enabled=enabled)
+            coordinator = SimpleNamespace(
+                data={}, ac_coupled_pv_enabled=enabled, eps_current_enabled=enabled
+            )
             hass = SimpleNamespace(data={platform.DOMAIN: {"e1": coordinator}})
             added = []
             asyncio.run(platform.async_setup_entry(hass, entry, added.extend))
             keys = {entity.entity_description.key for entity in added}
             with self.subTest(enabled=enabled):
                 self.assertEqual("acc_power_total" in keys, enabled)
+                self.assertEqual("eps_current_r" in keys, enabled)
                 self.assertIn("third_party_meter_power", keys)
                 self.assertIn("firmware_update_state", keys)
