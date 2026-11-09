@@ -354,13 +354,15 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
 )
 
 
-# --- Optional 30626 block: AC-coupled PV (only when READ_MONITOR_EXT is on) ---
+# --- Optional 30600 block: AC-coupled PV (only when READ_MONITOR_EXT is on) ---
+# Disabled by default: the Third Party Meter values already cover AC-coupled PV.
 ACC_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
     SensorEntityDescription(
         key="acc_power_total", name="AC Coupled PV Power",
         native_unit_of_measurement=UnitOfPower.WATT,
         device_class=SensorDeviceClass.POWER,
         state_class=SensorStateClass.MEASUREMENT,
+        entity_registry_enabled_default=False,
     ),
     *(
         SensorEntityDescription(
@@ -374,7 +376,7 @@ ACC_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
     ),
 )
 
-# --- Optional 30600 block: EPS current (only when READ_BACKUP_CURRENT is on) ---
+# --- Optional 30600 block: EPS current (only when READ_MONITOR_EXT is on) ---
 EPS_CURRENT_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = tuple(
     SensorEntityDescription(
         key=f"eps_current_{phase}", name=f"EPS Current {phase.upper()}",
@@ -474,7 +476,7 @@ async def async_setup_entry(
 
     # Create a PylontechSensor for each description above
     descriptions = SENSOR_TYPES + OPTIONAL_SENSOR_TYPES
-    # AC-coupled PV only exists when the 30626 block is read; otherwise these
+    # AC-coupled PV only exists when the 30600 block is read; otherwise these
     # sensors would stay empty.
     if getattr(coordinator, "ac_coupled_pv_enabled", False):
         descriptions += ACC_SENSOR_TYPES

@@ -20,10 +20,9 @@ from test_coordinator import (
 TEST_INTERVALS = {
     "READ_IDENTITY": 3600, "READ_DEVICE_INFO_EXT": 3600, "READ_BMS_DEVICE_INFO": 3600,
     "READ_FAULT_BITS": 30, "READ_SITE_LIMIT": 30, "READ_MONITOR_EXT": 30,
-    "READ_BACKUP_CURRENT": 30,
 }
 POLLS_PER_SLOW_READ = 6  # 6 polls x 5 s = 30 s
-OPTIONAL_ADDRESSES = (30010, 30036, 0x1000, 30148, 30626, 40937, 30600)
+OPTIONAL_ADDRESSES = (30010, 30036, 0x1000, 30148, 30600, 40937)
 
 
 def ascii_regs(text, count):
@@ -48,13 +47,13 @@ def optional_blocks():
     bms[30] = 0x0101                 # V1.1
     blocks[0x1000] = bms
     blocks[30148] = [0, 0b10, 0, 1 << 13, 0]  # fault bit 1, warning bit 13
-    monitor = [0] * 34
-    put_int(monitor, 28, 0)
-    put_int(monitor, 30, -850)
-    put_int(monitor, 32, 0)
-    blocks[30626] = monitor
+    monitor = [0] * 60
+    monitor[0] = 6                  # 30600 EPS current R 0.6 A
+    put_int(monitor, 54, 0)         # 30654 AC-coupled PV R
+    put_int(monitor, 56, -850)      # 30656 AC-coupled PV S
+    put_int(monitor, 58, 0)         # 30658 AC-coupled PV T
+    blocks[30600] = monitor
     blocks[40937] = [0, 7000]
-    blocks[30600] = [6, 0, 0]                 # EPS current R 0.6 A
     put_int(blocks[30100], 10, -840)
     put_float(blocks[30100], 12, 12.5)
     blocks[30100][17] = 0
@@ -142,19 +141,19 @@ class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(data["grid_import_power_limit"], 7000)
             self.assertEqual(data["fault_bits"], 0b10)
             self.assertEqual(data["warning_bits_extended"], 0)
-        self.assertEqual(self.calls.count(30626), 1)
+        self.assertEqual(self.calls.count(30600), 1)
         await self.poll()
-        self.assertEqual(self.calls.count(30626), 2)
+        self.assertEqual(self.calls.count(30600), 2)
 
     async def test_refused_block_is_disabled_and_never_triggers_backoff(self):
-        self.refused.add(30626)
+        self.refused.add(30600)
         interval = self.coordinator.update_interval
         for _ in range(POLLS_PER_SLOW_READ * 5):
             data = await self.poll()
             self.assertIn("battery_soc", data)
         # three attempts, then switched off until restart
-        self.assertEqual(self.calls.count(30626), coordinator_module.OPTIONAL_MAX_FAILURES)
-        self.assertIn(30626, self.coordinator._optional_disabled)
+        self.assertEqual(self.calls.count(30600), coordinator_module.OPTIONAL_MAX_FAILURES)
+        self.assertIn(30600, self.coordinator._optional_disabled)
         self.assertEqual(self.coordinator._bad_polls, 0)
         self.assertEqual(self.coordinator.update_interval, interval)
         # a refusal is a normal Modbus reply: no reconnect
@@ -192,25 +191,25 @@ class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_unanswered_block_is_paused_then_retried(self):
         pause = coordinator_module.OPTIONAL_PAUSE_S
-        self.silent.add(30626)
+        self.silent.add(30600)
         for _ in range(POLLS_PER_SLOW_READ * 3):
             data = await self.poll()
-        self.assertEqual(self.calls.count(30626), 1)
-        self.assertNotIn(30626, self.coordinator._optional_disabled)
+        self.assertEqual(self.calls.count(30600), 1)
+        self.assertNotIn(30600, self.coordinator._optional_disabled)
         self.assertEqual(self.coordinator._bad_polls, 0)
         self.assertIn("battery_soc", data)
         # still paused just before the pause ends
         while self.now + 5 < 5 + pause:
             await self.poll()
-        self.assertEqual(self.calls.count(30626), 1)
+        self.assertEqual(self.calls.count(30600), 1)
         # one new attempt after the pause; it answers, normal interval resumes
-        self.silent.discard(30626)
+        self.silent.discard(30600)
         data = await self.poll()
-        self.assertEqual(self.calls.count(30626), 2)
+        self.assertEqual(self.calls.count(30600), 2)
         self.assertEqual(data["acc_power_total"], -850)
         for _ in range(POLLS_PER_SLOW_READ):
             await self.poll()
-        self.assertEqual(self.calls.count(30626), 3)
+        self.assertEqual(self.calls.count(30600), 3)
 
     async def test_paused_block_drops_its_cached_values(self):
         data = await self.poll()
@@ -237,13 +236,18 @@ class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["fault_bits"], 0b10)
 
     async def test_eps_current_is_decoded_from_its_own_block(self):
+        self.blocks[30600][27] = 1           # 30627: extended fault bit 0
+        self.blocks[30600][29] = 1 << 2      # 30629: extended warning bit 2
         data = await self.poll()
+        self.assertEqual(data["fault_bits_extended"], 1)
+        self.assertEqual(data["warning_bits_extended"], 4)
+        self.assertEqual(data["acc_power_s"], -850)
         self.assertAlmostEqual(data["eps_current_r"], 0.6, places=3)
         self.assertEqual(data["eps_current_s"], 0)
         self.assertIn(30600, self.calls)
 
     async def test_eps_current_out_of_range_is_rejected(self):
-        self.blocks[30600] = [5000, 0, 0]
+        self.blocks[30600][0] = 5000
         data = await self.poll()
         self.assertNotIn("eps_current_r", data)
         self.assertEqual(data["grid_import_power_limit"], 7000)
@@ -268,7 +272,7 @@ class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(coordinator_module, "READ_BMS_DEVICE_INFO", 0):
             for _ in range(POLLS_PER_SLOW_READ + 1):
                 await self.poll()
-        self.assertNotIn(30626, self.calls)
+        self.assertNotIn(30600, self.calls)
         self.assertNotIn(0x1000, self.calls)
         self.assertIn(30148, self.calls)
         self.assertIn(40937, self.calls)
@@ -282,16 +286,20 @@ class DefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(coordinator_module.READ_BMS_DEVICE_INFO, 3600)
         self.assertEqual(coordinator_module.READ_FAULT_BITS, 300)
         self.assertEqual(coordinator_module.READ_SITE_LIMIT, 300)
-        self.assertEqual(coordinator_module.READ_MONITOR_EXT, 0)
+        self.assertEqual(coordinator_module.READ_MONITOR_EXT, 60)
 
-    async def test_monitor_ext_is_off_by_default(self):
+    async def test_monitor_ext_reads_from_block_start(self):
         coordinator = coordinator_module.PylontechCoordinator(None, "test", 502)
         coordinator.use_single_block_read = False
         blocks = valid_blocks()
         calls = []
 
+        blocks[30600] = [0] * 60
+
         async def response(*, address, count, **kwargs):
             calls.append(address)
+            if address == 30600:
+                calls.append(("count", count))
             return SimpleNamespace(isError=lambda: False, registers=blocks[address])
 
         coordinator.client.read_holding_registers.side_effect = response
@@ -299,6 +307,8 @@ class DefaultsTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(coordinator_module._LOGGER, "warning"):
             for _ in range(POLLS_PER_SLOW_READ):
                 await coordinator._async_update_data()
+        self.assertIn(30600, calls)
+        self.assertIn(("count", 60), calls)
         self.assertNotIn(30626, calls)
         self.assertIn(30148, calls)
         self.assertIn(40937, calls)
