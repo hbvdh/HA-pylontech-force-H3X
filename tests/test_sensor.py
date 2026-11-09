@@ -119,3 +119,47 @@ class SensorTests(unittest.TestCase):
                 self.assertEqual("bms_cell_voltage_delta" in keys, enabled)
                 self.assertIn("third_party_meter_power", keys)
                 self.assertIn("firmware_update_state", keys)
+
+    def test_cell_sensors_follow_their_blocks(self):
+        import asyncio
+
+        platform = load_sensor()
+        entry = SimpleNamespace(data={"host": "test"}, entry_id="e1", title="Test")
+        for volts, temps in ((False, False), (True, False), (True, True)):
+            coordinator = SimpleNamespace(
+                data={}, bms_system_enabled=True,
+                bms_cell_voltages_enabled=volts, bms_cell_temperatures_enabled=temps,
+            )
+            hass = SimpleNamespace(data={platform.DOMAIN: {"e1": coordinator}})
+            added = []
+            asyncio.run(platform.async_setup_entry(hass, entry, added.extend))
+            keys = {entity.entity_description.key for entity in added}
+            with self.subTest(volts=volts, temps=temps):
+                self.assertEqual("bms_cell_voltage_avg" in keys, volts)
+                self.assertEqual("bms_cell_temperature_avg" in keys, temps)
+
+    def test_cell_voltage_sensor_attributes(self):
+        platform = load_sensor()
+        cells = [3.265] * 96
+        cells[11], cells[36] = 3.258, 3.271
+        coordinator = SimpleNamespace(
+            data={"bms_cell_voltage_avg": 3.2650, "bms_cell_voltages": cells}
+        )
+        entry = SimpleNamespace(data={"host": "test"}, entry_id="test", title="Test")
+        sensor = platform.PylontechCellSensor(
+            coordinator, platform.BMS_CELL_VOLTAGES_SENSOR, entry,
+            cells_key="bms_cell_voltages", spread_scale=1000,
+        )
+        self.assertEqual(sensor.native_value, 3.265)
+        attrs = sensor.extra_state_attributes
+        self.assertEqual(attrs["min"], 3.258)
+        self.assertEqual(attrs["min_cell"], 12)
+        self.assertEqual(attrs["max_cell"], 37)
+        self.assertEqual(attrs["spread"], 13.0)
+        self.assertEqual(len(attrs["cells"]), 96)
+        # the 96-value list is never written to the recorder
+        self.assertIn("cells", platform.PylontechCellSensor._unrecorded_attributes)
+        self.assertNotIn("min", platform.PylontechCellSensor._unrecorded_attributes)
+        coordinator.data = {}
+        self.assertIsNone(sensor.native_value)
+        self.assertEqual(sensor.extra_state_attributes, {})

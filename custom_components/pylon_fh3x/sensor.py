@@ -563,6 +563,21 @@ ISSUE_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
 )
 
 
+# Individual cells: one average sensor per block, every cell as attribute.
+BMS_CELL_VOLTAGES_SENSOR = SensorEntityDescription(
+    key="bms_cell_voltage_avg", name="BMS Cell Voltage Average",
+    native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+    device_class=SensorDeviceClass.VOLTAGE,
+    state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=3,
+)
+BMS_CELL_TEMPERATURES_SENSOR = SensorEntityDescription(
+    key="bms_cell_temperature_avg", name="BMS Cell Temperature Average",
+    native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+    device_class=SensorDeviceClass.TEMPERATURE,
+    state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=1,
+)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -588,6 +603,20 @@ async def async_setup_entry(
     entities.append(
         PylontechFirmwareStateSensor(coordinator, FIRMWARE_UPDATE_STATE_SENSOR, entry)
     )
+    if getattr(coordinator, "bms_cell_voltages_enabled", False):
+        entities.append(
+            PylontechCellSensor(
+                coordinator, BMS_CELL_VOLTAGES_SENSOR, entry,
+                cells_key="bms_cell_voltages", spread_scale=1000,
+            )
+        )
+    if getattr(coordinator, "bms_cell_temperatures_enabled", False):
+        entities.append(
+            PylontechCellSensor(
+                coordinator, BMS_CELL_TEMPERATURES_SENSOR, entry,
+                cells_key="bms_cell_temperatures", spread_scale=1,
+            )
+        )
     entities += [
         PylontechIdentitySensor(coordinator, description, entry)
         for description in IDENTITY_SENSOR_TYPES
@@ -688,4 +717,36 @@ class PylontechIssueSensor(PylontechSensor):
             "active_issues": active_issues(bits, self._names) if bits is not None else [],
             "raw_bits": bits,
             "code": data.get(code_key),
+        }
+
+
+class PylontechCellSensor(PylontechSensor):
+    """Average of all cells; every cell, min/max and spread as attributes.
+
+    The full cell list is not written to the recorder (96 values per state
+    change); min, max, which cell and the spread are, as small numbers.
+    Cells are numbered from 1, as in the Pylontech Research library; compare
+    max_cell/min_cell with the 0x1100 cell index sensors to confirm the base.
+    """
+
+    _unrecorded_attributes = frozenset({"cells"})
+
+    def __init__(self, coordinator, description, entry, *, cells_key, spread_scale):
+        super().__init__(coordinator, description, entry)
+        self._cells_key = cells_key
+        self._spread_scale = spread_scale  # V -> mV for voltages
+
+    @property
+    def extra_state_attributes(self):
+        cells = (self.coordinator.data or {}).get(self._cells_key)
+        if not cells:
+            return {}
+        low, high = min(cells), max(cells)
+        return {
+            "min": low,
+            "min_cell": cells.index(low) + 1,
+            "max": high,
+            "max_cell": cells.index(high) + 1,
+            "spread": round((high - low) * self._spread_scale, 1),
+            "cells": list(cells),
         }

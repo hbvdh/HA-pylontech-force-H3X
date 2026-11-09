@@ -21,9 +21,13 @@ TEST_INTERVALS = {
     "READ_IDENTITY": 3600, "READ_DEVICE_INFO_EXT": 3600, "READ_BMS_DEVICE_INFO": 3600,
     "READ_FAULT_BITS": 30, "READ_SITE_LIMIT": 30, "READ_MONITOR_EXT": 30,
     "READ_BMS_SYSTEM": 30,
+    "READ_BMS_CELL_VOLTAGES": 30, "READ_BMS_CELL_TEMPERATURES": 30,
 }
 POLLS_PER_SLOW_READ = 6  # 6 polls x 5 s = 30 s
-OPTIONAL_ADDRESSES = (30010, 30036, 0x1000, 30148, 30600, 40937, 0x1100)
+OPTIONAL_ADDRESSES = (
+    30010, 30036, 0x1000, 30148, 30600, 40937, 0x1100, 0x1500, 0x1800,
+)
+CELL_ADDRESSES = (0x1500, 0x1800)
 
 
 def ascii_regs(text, count):
@@ -65,6 +69,12 @@ def optional_blocks():
     system[24], system[25] = 10446, 10444  # module voltage 104.46 / 104.44 V
     system[54], system[55] = 3, 96  # modules, cells
     blocks[0x1100] = system
+    cells = [3265] * 96
+    cells[11], cells[36] = 3258, 3271   # cell 12 lowest, cell 37 highest
+    blocks[0x1500] = cells
+    temps = [205] * 96
+    temps[4], temps[60] = 197, 0xFFF6   # 19.7 degC, cell 61 at -1.0 degC
+    blocks[0x1800] = temps
     blocks[40937] = [0, 7000]
     put_int(blocks[30100], 10, -840)
     put_float(blocks[30100], 12, 12.5)
@@ -81,6 +91,8 @@ class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
         self.refused = set()
         self.silent = set()
         self.calls = []
+        self.counts = {}
+        self.polls = []  # optional addresses read per poll
         self.now = 0
         self.coordinator.client.read_holding_registers.side_effect = self.response
         switches = [
@@ -101,6 +113,7 @@ class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
 
     async def response(self, *, address, count, **kwargs):
         self.calls.append(address)
+        self.counts[address] = count
         if address in self.silent:
             raise TimeoutError("no response")
         if address in self.refused:
@@ -110,7 +123,13 @@ class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
 
     async def poll(self):
         self.now += 5
-        data = await self.coordinator._async_update_data()
+        start = len(self.calls)
+        try:
+            data = await self.coordinator._async_update_data()
+        finally:
+            self.polls.append(
+                [a for a in self.calls[start:] if a in OPTIONAL_ADDRESSES]
+            )
         self.coordinator.data = data
         return data
 
@@ -310,6 +329,78 @@ class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(30010, self.calls)
 
 
+    async def test_cell_voltages_are_decoded_with_count_from_0x1100(self):
+        for _ in range(3):
+            data = await self.poll()
+        self.assertEqual(self.counts[0x1500], 96)
+        self.assertEqual(len(data["bms_cell_voltages"]), 96)
+        self.assertEqual(data["bms_cell_voltages"][11], 3.258)
+        self.assertEqual(data["bms_cell_voltages"][36], 3.271)
+        self.assertAlmostEqual(data["bms_cell_voltage_avg"], 3.265, places=3)
+
+    async def test_cell_temperatures_are_signed(self):
+        for _ in range(3):
+            data = await self.poll()
+        self.assertEqual(self.counts[0x1800], 96)
+        self.assertEqual(data["bms_cell_temperatures"][4], 19.7)
+        self.assertEqual(data["bms_cell_temperatures"][60], -1.0)
+
+    async def test_cell_blocks_never_share_a_poll_with_another_optional_read(self):
+        for _ in range(POLLS_PER_SLOW_READ * 4):
+            await self.poll()
+        self.assertGreaterEqual(self.calls.count(0x1500), 2)
+        self.assertGreaterEqual(self.calls.count(0x1800), 2)
+        for reads in self.polls:
+            if any(a in CELL_ADDRESSES for a in reads):
+                self.assertEqual(len(reads), 1, reads)
+
+    async def test_cell_blocks_need_the_bms_system_block(self):
+        with patch.object(coordinator_module, "READ_BMS_SYSTEM", 0):
+            for _ in range(POLLS_PER_SLOW_READ):
+                await self.poll()
+            self.assertFalse(self.coordinator.bms_cell_voltages_enabled)
+        for address in CELL_ADDRESSES:
+            self.assertNotIn(address, self.calls)
+
+    async def test_cell_count_stays_known_while_0x1100_is_paused(self):
+        for _ in range(3):
+            await self.poll()
+        self.silent.add(0x1100)
+        for _ in range(POLLS_PER_SLOW_READ * 2):
+            data = await self.poll()
+        self.assertNotIn("bms_cell_count", data)
+        self.assertGreaterEqual(self.calls.count(0x1500), 2)
+        self.assertIn("bms_cell_voltages", data)
+
+    async def test_implausible_cell_value_is_a_failure_not_a_value(self):
+        self.blocks[0x1500][5] = 0
+        for _ in range(3):
+            data = await self.poll()
+        self.assertIn(0x1500, self.calls)
+        self.assertNotIn("bms_cell_voltages", data)
+        self.assertEqual(self.coordinator._optional_failures[0x1500], 1)
+        self.assertNotIn(0x1500, self.coordinator._optional_disabled)
+
+    async def test_more_cells_than_one_read_are_skipped(self):
+        self.blocks[0x1100][55] = 160
+        with patch.object(coordinator_module._LOGGER, "warning") as warning:
+            for _ in range(POLLS_PER_SLOW_READ * 2):
+                await self.poll()
+        for address in CELL_ADDRESSES:
+            self.assertNotIn(address, self.calls)
+        skipped = [c for c in warning.call_args_list if "not supported" in c.args[0]]
+        self.assertEqual(len(skipped), 1)
+
+    async def test_cell_temperatures_can_be_off_while_voltages_are_on(self):
+        with patch.object(coordinator_module, "READ_BMS_CELL_TEMPERATURES", 0):
+            for _ in range(POLLS_PER_SLOW_READ * 2):
+                await self.poll()
+            self.assertTrue(self.coordinator.bms_cell_voltages_enabled)
+            self.assertFalse(self.coordinator.bms_cell_temperatures_enabled)
+        self.assertIn(0x1500, self.calls)
+        self.assertNotIn(0x1800, self.calls)
+
+
 class DefaultsTests(unittest.IsolatedAsyncioTestCase):
     def test_default_intervals(self):
         self.assertEqual(coordinator_module.READ_IDENTITY, 3600)
@@ -319,6 +410,9 @@ class DefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(coordinator_module.READ_SITE_LIMIT, 300)
         self.assertEqual(coordinator_module.READ_MONITOR_EXT, 300)
         self.assertEqual(coordinator_module.READ_BMS_SYSTEM, 300)
+        self.assertEqual(coordinator_module.READ_BMS_CELL_VOLTAGES, 900)
+        # temperatures follow once the voltages ran clean on a live system
+        self.assertEqual(coordinator_module.READ_BMS_CELL_TEMPERATURES, 0)
 
     async def test_monitor_ext_reads_from_block_start(self):
         coordinator = coordinator_module.PylontechCoordinator(None, "test", 502)

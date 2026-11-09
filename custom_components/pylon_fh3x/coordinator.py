@@ -93,6 +93,18 @@ READ_MONITOR_EXT = 300         # 30600/60  EPS current, extended bits, AC-couple
 # normal BMS read, so every 5 minutes is enough here. In test.
 READ_BMS_SYSTEM = 300          # 0x1100/79 (BMS, slave 1)
 
+# Individual cells (unit 1), from the BMS pile region as in the Pylontech
+# Research library (detailed_bms, off by default there). One register per
+# cell; the cell count comes from the 0x1100 block, so these need READ_BMS_SYSTEM.
+# Exposed as one average sensor per block with all cells as an unrecorded
+# attribute. A cell block is never read in the same poll as another optional
+# block: it waits for a poll without one (5 s later), so the dongle never gets
+# two extra BMS requests at once. A first attempt at the cell blocks (before
+# these safety rules) made the dongle hang, so one block at a time: voltages
+# first, temperatures once the voltages ran clean. In test.
+READ_BMS_CELL_VOLTAGES = 900       # 0x1500/n (BMS, slave 1) cell voltages
+READ_BMS_CELL_TEMPERATURES = 0     # 0x1800/n (BMS, slave 1) cell temperatures, not yet
+
 # Logging: a successful optional read is logged at DEBUG (address, duration);
 # enable debug logging for the integration to see every read. A failed read is
 # always logged at WARNING.
@@ -108,6 +120,11 @@ FAULT_BITS_BLOCK = (30148, 5, 2)
 SITE_LIMIT_BLOCK = (40937, 2, 2)
 MONITOR_EXT_BLOCK = (30600, 60, 2)
 BMS_SYSTEM_BLOCK = (0x1100, 79, 1)
+# Register count is the cell count reported by 0x1100 (96 on a 3-module FH3X).
+BMS_CELL_VOLTAGES_ADDRESS = 0x1500
+BMS_CELL_TEMPERATURES_ADDRESS = 0x1800
+# One read only; larger batteries would need chunked reads (not supported yet).
+BMS_CELL_MAX_REGISTERS = 120
 
 
 def block_interval(block) -> int:
@@ -125,6 +142,8 @@ def block_interval(block) -> int:
         SITE_LIMIT_BLOCK[0]: "READ_SITE_LIMIT",
         MONITOR_EXT_BLOCK[0]: "READ_MONITOR_EXT",
         BMS_SYSTEM_BLOCK[0]: "READ_BMS_SYSTEM",
+        BMS_CELL_VOLTAGES_ADDRESS: "READ_BMS_CELL_VOLTAGES",
+        BMS_CELL_TEMPERATURES_ADDRESS: "READ_BMS_CELL_TEMPERATURES",
     }.get(block[0])
     return max(0, int(globals()[setting])) if setting else 0
 
@@ -313,6 +332,28 @@ def decode_bms_system(regs):
     }
 
 
+def decode_bms_cell_voltages(regs):
+    """BMS 0x1500 (unit 1): one register per cell, mV."""
+    if not regs or any(not 1000 <= r <= 5000 for r in regs):
+        raise ValueError(f"cell voltage outside 1.000-5.000 V: {list(regs)}")
+    cells = [round(r * 0.001, 3) for r in regs]
+    return {
+        "bms_cell_voltages": cells,
+        "bms_cell_voltage_avg": round(sum(regs) / len(regs) * 0.001, 4),
+    }
+
+
+def decode_bms_cell_temperatures(regs):
+    """BMS 0x1800 (unit 1): one register per cell, signed 0.1 degC."""
+    temps = [round(get_16bit_int(regs, i) * 0.1, 1) for i in range(len(regs))]
+    if not temps or any(not -40 <= t <= 100 for t in temps):
+        raise ValueError(f"cell temperature outside -40-100 degC: {list(regs)}")
+    return {
+        "bms_cell_temperatures": temps,
+        "bms_cell_temperature_avg": round(sum(temps) / len(temps), 2),
+    }
+
+
 def decode_site_limit(regs):
     """PCS 40937-40938: grid import power limit (U32, W)."""
     return {"grid_import_power_limit": (regs[0] << 16) | regs[1]}
@@ -362,6 +403,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
         self._single_block_failures = 0
         self._bad_polls = 0
         self._failed_reads_this_poll = 0
+        self._optional_reads_this_poll = 0
         self._in_poll = False
 
         # Optional reads: static device info, slow blocks and their cache.
@@ -371,6 +413,9 @@ class PylontechCoordinator(DataUpdateCoordinator):
         self._optional_next_read: dict[int, float] = {}
         self._slow_values: dict = {}
         self._optional_keys: dict[int, set] = {}  # value keys per block
+        # Last cell count from 0x1100, kept while that block is paused.
+        self._bms_cell_count: int | None = None
+        self._cell_count_warned = False
 
         super().__init__(
             hass,
@@ -396,6 +441,36 @@ class PylontechCoordinator(DataUpdateCoordinator):
     def bms_system_enabled(self) -> bool:
         """True when the BMS system block (0x1100) is read at all."""
         return block_interval(BMS_SYSTEM_BLOCK) > 0
+
+    @property
+    def bms_cell_voltages_enabled(self) -> bool:
+        """True when the cell voltages (0x1500) are read at all."""
+        return self.bms_system_enabled and block_interval(
+            (BMS_CELL_VOLTAGES_ADDRESS, 0, 1)
+        ) > 0
+
+    @property
+    def bms_cell_temperatures_enabled(self) -> bool:
+        """True when the cell temperatures (0x1800) are read at all."""
+        return self.bms_system_enabled and block_interval(
+            (BMS_CELL_TEMPERATURES_ADDRESS, 0, 1)
+        ) > 0
+
+    def _cell_block(self, address):
+        """(address, cell count, 1), or None when the count is not usable."""
+        count = self._bms_cell_count
+        if not count:
+            return None
+        if count > BMS_CELL_MAX_REGISTERS:
+            if not self._cell_count_warned:
+                self._cell_count_warned = True
+                _LOGGER.warning(
+                    "BMS reports %s cells; reading more than %s cells is not "
+                    "supported yet, cell blocks are skipped",
+                    count, BMS_CELL_MAX_REGISTERS,
+                )
+            return None
+        return (address, count, 1)
 
     @property
     def eps_current_enabled(self) -> bool:
@@ -430,6 +505,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
         if not self._optional_due(block):
             return None
 
+        self._optional_reads_this_poll += 1
         error = None
         registers = None
         no_answer = False
@@ -820,6 +896,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self):
         """Poll the inverter; back off when the dongle stops answering."""
         self._failed_reads_this_poll = 0
+        self._optional_reads_this_poll = 0
         self._in_poll = True
         try:
             data = await self._async_poll_once()
@@ -1066,6 +1143,25 @@ class PylontechCoordinator(DataUpdateCoordinator):
                 values = await self._read_optional(BMS_SYSTEM_BLOCK, decode_bms_system)
                 if values:
                     self._slow_values.update(values)
+                    count = values.get("bms_cell_count")
+                    if isinstance(count, int) and count > 0:
+                        self._bms_cell_count = count
+
+                # Individual cells: only when 0x1100 is read (cell count), and
+                # never in a poll that already made another optional read.
+                if self.bms_system_enabled:
+                    for address, decode in (
+                        (BMS_CELL_VOLTAGES_ADDRESS, decode_bms_cell_voltages),
+                        (BMS_CELL_TEMPERATURES_ADDRESS, decode_bms_cell_temperatures),
+                    ):
+                        if self._optional_reads_this_poll:
+                            break
+                        block = self._cell_block(address)
+                        if block is None:
+                            continue
+                        values = await self._read_optional(block, decode)
+                        if values:
+                            self._slow_values.update(values)
 
             # Slow optional values are cached between their reads, so their
             # sensors do not flip to unknown in between. Only added when this
