@@ -41,8 +41,10 @@ VALUE_RANGES = {
     "bms_cell_voltage_delta": (0, 1000),
     "bms_cell_temperature_max": (-40, 100),
     "bms_cell_temperature_min": (-40, 100),
-    "bms_module_voltage_max": (0, 100),
-    "bms_module_voltage_min": (0, 100),
+    # A module is a series string of cells (e.g. 32 x 3.3 V = ~105 V on the
+    # FH3X battery), not a 48 V module.
+    "bms_module_voltage_max": (0, 300),
+    "bms_module_voltage_min": (0, 300),
     "bms_module_temperature_max": (-40, 100),
     "bms_module_temperature_min": (-40, 100),
     "bms_remaining_energy": (0, 1000),

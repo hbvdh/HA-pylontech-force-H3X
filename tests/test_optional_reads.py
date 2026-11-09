@@ -62,6 +62,7 @@ def optional_blocks():
     system[18], system[19] = 37, 12       # which cell
     system[20], system[21] = 215, 198     # cell temp 21.5 / 19.8
     system[33:35] = [0, 3584]       # remaining energy 3.584 kWh
+    system[24], system[25] = 10446, 10444  # module voltage 104.46 / 104.44 V
     system[54], system[55] = 3, 96  # modules, cells
     blocks[0x1100] = system
     blocks[40937] = [0, 7000]
@@ -273,6 +274,7 @@ class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(data["bms_max_discharge_current"], 25.0, places=3)
         self.assertAlmostEqual(data["bms_remaining_energy"], 3.584, places=3)
         self.assertEqual(data["bms_cell_count"], 96)
+        self.assertAlmostEqual(data["bms_module_voltage_max"], 104.46, places=3)
         self.assertEqual(data["bms_error_code_1"], 0)
         # the per-poll pile values are not overwritten by the system block
         self.assertEqual(data["bms_soc"], self.blocks[5123][4])
