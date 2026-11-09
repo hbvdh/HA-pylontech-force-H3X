@@ -317,7 +317,8 @@ class DefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(coordinator_module.READ_BMS_DEVICE_INFO, 3600)
         self.assertEqual(coordinator_module.READ_FAULT_BITS, 300)
         self.assertEqual(coordinator_module.READ_SITE_LIMIT, 300)
-        self.assertEqual(coordinator_module.READ_MONITOR_EXT, 60)
+        self.assertEqual(coordinator_module.READ_MONITOR_EXT, 300)
+        self.assertEqual(coordinator_module.READ_BMS_SYSTEM, 300)
 
     async def test_monitor_ext_reads_from_block_start(self):
         coordinator = coordinator_module.PylontechCoordinator(None, "test", 502)

@@ -82,14 +82,16 @@ READ_SITE_LIMIT = 300          # 40937/2   grid import power limit
 # block at 30600, as that integration does: EPS current per phase, extended
 # fault/warning bits and AC-coupled PV per phase. A first test that started
 # mid-block at 30626 (together with all other new blocks) confused the dongle.
-# In test.
-READ_MONITOR_EXT = 60          # 30600/60  EPS current, extended bits, AC-coupled PV
+# These values change slowly (EPS power itself comes every 5 s), so every
+# 5 minutes keeps the extra load on the dongle small. In test.
+READ_MONITOR_EXT = 300         # 30600/60  EPS current, extended bits, AC-coupled PV
 
 # BMS system block (unit 1): summary of all cells and modules (which cell is
 # highest/lowest, cell temperatures), BMS limits, status/alarm/error codes,
 # module and cell count. Read from the block start, as the Pylontech Research
-# integration does. In test.
-READ_BMS_SYSTEM = 60           # 0x1100/79 (BMS, slave 1)
+# integration does. Cell min/max and SOC already come every 5 s from the
+# normal BMS read, so every 5 minutes is enough here. In test.
+READ_BMS_SYSTEM = 300          # 0x1100/79 (BMS, slave 1)
 
 # Logging: a successful optional read is logged at DEBUG (address, duration);
 # enable debug logging for the integration to see every read. A failed read is
