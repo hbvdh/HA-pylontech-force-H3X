@@ -21,10 +21,13 @@ async def async_setup_entry(
 ) -> None:
     """Set up the inverter problem and EPS enabled binary sensors."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([
+    entities = [
         PylontechProblemSensor(coordinator, entry),
         PylontechEpsEnabledSensor(coordinator, entry),
-    ])
+    ]
+    if getattr(coordinator, "bms_system_enabled", False):
+        entities.append(PylontechBmsAlarmSensor(coordinator, entry))
+    async_add_entities(entities)
 
 
 class PylontechProblemSensor(CoordinatorEntity, BinarySensorEntity):
@@ -76,3 +79,42 @@ class PylontechEpsEnabledSensor(CoordinatorEntity, BinarySensorEntity):
     def is_on(self) -> bool | None:
         value = (self.coordinator.data or {}).get("eps_enable")
         return None if value is None else bool(value)
+
+
+BMS_ALARM_KEYS = (
+    "bms_protection_status",
+    "bms_alarm_status_1",
+    "bms_alarm_status_2",
+    "bms_error_code_1",
+    "bms_error_code_2",
+)
+
+
+class PylontechBmsAlarmSensor(CoordinatorEntity, BinarySensorEntity):
+    """BMS protection, alarm or error active (0x1100 block)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "BMS Alarm"
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{DOMAIN}_{entry.data['host']}_bms_alarm"
+        self._attr_device_info = device_info(coordinator, entry)
+
+    @property
+    def _codes(self) -> dict:
+        data = self.coordinator.data or {}
+        return {key: data.get(key) for key in BMS_ALARM_KEYS}
+
+    @property
+    def is_on(self) -> bool | None:
+        codes = self._codes
+        if any(value is None for value in codes.values()):
+            return None
+        return any(codes.values())
+
+    @property
+    def extra_state_attributes(self):
+        return self._codes

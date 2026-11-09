@@ -31,7 +31,7 @@ def load_sensor():
     sensor = modules["homeassistant.components.sensor"]
     sensor.SensorDeviceClass = SimpleNamespace(**{name: name.lower() for name in (
         "VOLTAGE", "CURRENT", "POWER", "APPARENT_POWER", "ENERGY", "FREQUENCY",
-        "BATTERY", "TEMPERATURE",
+        "BATTERY", "TEMPERATURE", "ENERGY_STORAGE",
     )})
     sensor.SensorStateClass = SimpleNamespace(MEASUREMENT="measurement", TOTAL_INCREASING="total_increasing")
     sensor.SensorEntity = SensorEntityStub
@@ -106,7 +106,8 @@ class SensorTests(unittest.TestCase):
         entry = SimpleNamespace(data={"host": "test"}, entry_id="e1", title="Test")
         for enabled in (False, True):
             coordinator = SimpleNamespace(
-                data={}, ac_coupled_pv_enabled=enabled, eps_current_enabled=enabled
+                data={}, ac_coupled_pv_enabled=enabled, eps_current_enabled=enabled,
+                bms_system_enabled=enabled,
             )
             hass = SimpleNamespace(data={platform.DOMAIN: {"e1": coordinator}})
             added = []
@@ -115,5 +116,6 @@ class SensorTests(unittest.TestCase):
             with self.subTest(enabled=enabled):
                 self.assertEqual("acc_power_total" in keys, enabled)
                 self.assertEqual("eps_current_r" in keys, enabled)
+                self.assertEqual("bms_cell_voltage_delta" in keys, enabled)
                 self.assertIn("third_party_meter_power", keys)
                 self.assertIn("firmware_update_state", keys)

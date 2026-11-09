@@ -20,9 +20,10 @@ from test_coordinator import (
 TEST_INTERVALS = {
     "READ_IDENTITY": 3600, "READ_DEVICE_INFO_EXT": 3600, "READ_BMS_DEVICE_INFO": 3600,
     "READ_FAULT_BITS": 30, "READ_SITE_LIMIT": 30, "READ_MONITOR_EXT": 30,
+    "READ_BMS_SYSTEM": 30,
 }
 POLLS_PER_SLOW_READ = 6  # 6 polls x 5 s = 30 s
-OPTIONAL_ADDRESSES = (30010, 30036, 0x1000, 30148, 30600, 40937)
+OPTIONAL_ADDRESSES = (30010, 30036, 0x1000, 30148, 30600, 40937, 0x1100)
 
 
 def ascii_regs(text, count):
@@ -53,6 +54,16 @@ def optional_blocks():
     put_int(monitor, 56, -850)      # 30656 AC-coupled PV S
     put_int(monitor, 58, 0)         # 30658 AC-coupled PV T
     blocks[30600] = monitor
+    system = [0] * 79
+    system[9] = 3550                # max charge voltage 355.0 V
+    system[10:12] = [0, 2500]       # max charge current 25.00 A
+    system[13:15] = [0, 2500]       # max discharge current 25.00 A
+    system[16], system[17] = 3301, 3288   # cell max/min mV -> delta 13
+    system[18], system[19] = 37, 12       # which cell
+    system[20], system[21] = 215, 198     # cell temp 21.5 / 19.8
+    system[33:35] = [0, 3584]       # remaining energy 3.584 kWh
+    system[54], system[55] = 3, 96  # modules, cells
+    blocks[0x1100] = system
     blocks[40937] = [0, 7000]
     put_int(blocks[30100], 10, -840)
     put_float(blocks[30100], 12, 12.5)
@@ -251,6 +262,24 @@ class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
         data = await self.poll()
         self.assertNotIn("eps_current_r", data)
         self.assertEqual(data["grid_import_power_limit"], 7000)
+
+    async def test_bms_system_block_is_decoded(self):
+        data = await self.poll()
+        self.assertIn(0x1100, self.calls)
+        self.assertEqual(data["bms_cell_voltage_delta"], 13)
+        self.assertEqual(data["bms_cell_voltage_max_cell"], 37)
+        self.assertAlmostEqual(data["bms_cell_temperature_max"], 21.5, places=3)
+        self.assertAlmostEqual(data["bms_max_charge_current"], 25.0, places=3)
+        self.assertAlmostEqual(data["bms_max_discharge_current"], 25.0, places=3)
+        self.assertAlmostEqual(data["bms_remaining_energy"], 3.584, places=3)
+        self.assertEqual(data["bms_cell_count"], 96)
+        self.assertEqual(data["bms_error_code_1"], 0)
+        # the per-poll pile values are not overwritten by the system block
+        self.assertEqual(data["bms_soc"], self.blocks[5123][4])
+
+    async def test_bms_system_read_after_normal_bms_read(self):
+        await self.poll()
+        self.assertLess(self.calls.index(5123), self.calls.index(0x1100))
 
     async def test_single_refusal_keeps_the_cached_value(self):
         await self.poll()

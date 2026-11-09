@@ -390,6 +390,101 @@ EPS_CURRENT_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = tuple(
     for phase in "rst"
 )
 
+# --- Optional BMS system block 0x1100 (only when READ_BMS_SYSTEM is on) -------
+def _bms_diag(key, name, **kwargs):
+    """Diagnostic BMS sensor, disabled by default."""
+    return SensorEntityDescription(
+        key=key, name=name, entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False, **kwargs,
+    )
+
+
+BMS_SYSTEM_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
+    SensorEntityDescription(
+        key="bms_cell_voltage_delta", name="BMS Cell Voltage Delta",
+        native_unit_of_measurement="mV", state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:battery-sync",
+    ),
+    SensorEntityDescription(
+        key="bms_cell_temperature_max", name="BMS Cell Temperature Max",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=1,
+    ),
+    SensorEntityDescription(
+        key="bms_cell_temperature_min", name="BMS Cell Temperature Min",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=1,
+    ),
+    SensorEntityDescription(
+        key="bms_max_charge_current", name="BMS Max Charge Current",
+        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        device_class=SensorDeviceClass.CURRENT,
+        state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=1,
+    ),
+    SensorEntityDescription(
+        key="bms_max_discharge_current", name="BMS Max Discharge Current",
+        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        device_class=SensorDeviceClass.CURRENT,
+        state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=1,
+    ),
+    SensorEntityDescription(
+        key="bms_remaining_energy", name="BMS Remaining Energy",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY_STORAGE,
+        state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=2,
+    ),
+    _bms_diag("bms_cell_voltage_max_cell", "BMS Cell Voltage Max Cell", icon="mdi:numeric"),
+    _bms_diag("bms_cell_voltage_min_cell", "BMS Cell Voltage Min Cell", icon="mdi:numeric"),
+    _bms_diag("bms_cell_temperature_max_cell", "BMS Cell Temperature Max Cell", icon="mdi:numeric"),
+    _bms_diag("bms_cell_temperature_min_cell", "BMS Cell Temperature Min Cell", icon="mdi:numeric"),
+    _bms_diag(
+        "bms_module_voltage_max", "BMS Module Voltage Max",
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        device_class=SensorDeviceClass.VOLTAGE, suggested_display_precision=2,
+    ),
+    _bms_diag(
+        "bms_module_voltage_min", "BMS Module Voltage Min",
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        device_class=SensorDeviceClass.VOLTAGE, suggested_display_precision=2,
+    ),
+    _bms_diag("bms_module_voltage_max_module", "BMS Module Voltage Max Module", icon="mdi:numeric"),
+    _bms_diag("bms_module_voltage_min_module", "BMS Module Voltage Min Module", icon="mdi:numeric"),
+    _bms_diag(
+        "bms_module_temperature_max", "BMS Module Temperature Max",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        device_class=SensorDeviceClass.TEMPERATURE, suggested_display_precision=1,
+    ),
+    _bms_diag(
+        "bms_module_temperature_min", "BMS Module Temperature Min",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        device_class=SensorDeviceClass.TEMPERATURE, suggested_display_precision=1,
+    ),
+    _bms_diag(
+        "bms_max_charge_voltage", "BMS Max Charge Voltage",
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        device_class=SensorDeviceClass.VOLTAGE, suggested_display_precision=1,
+    ),
+    _bms_diag(
+        "bms_min_discharge_voltage", "BMS Min Discharge Voltage",
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        device_class=SensorDeviceClass.VOLTAGE, suggested_display_precision=1,
+    ),
+    _bms_diag("bms_module_count", "BMS Module Count", icon="mdi:counter"),
+    _bms_diag("bms_cell_count", "BMS Cell Count", icon="mdi:counter"),
+    _bms_diag("bms_basic_status", "BMS Basic Status", icon="mdi:information-outline"),
+    _bms_diag("bms_protection_status", "BMS Protection Status", icon="mdi:shield-alert-outline"),
+    _bms_diag("bms_alarm_status_1", "BMS Alarm Status 1", icon="mdi:alert-outline"),
+    _bms_diag("bms_alarm_status_2", "BMS Alarm Status 2", icon="mdi:alert-outline"),
+    _bms_diag("bms_error_code_1", "BMS Error Code 1", icon="mdi:alert-circle-outline"),
+    _bms_diag("bms_error_code_2", "BMS Error Code 2", icon="mdi:alert-circle-outline"),
+    _bms_diag("bms_charge_forbidden", "BMS Charge Forbidden", icon="mdi:battery-off-outline"),
+    _bms_diag("bms_discharge_forbidden", "BMS Discharge Forbidden", icon="mdi:battery-off-outline"),
+    _bms_diag("bms_force_charge_request", "BMS Force Charge Request", icon="mdi:battery-alert"),
+    _bms_diag("bms_balance_charge_request", "BMS Balance Charge Request", icon="mdi:battery-sync"),
+)
+
 # --- Optional reads: third-party meter, codes, limits -------------------------
 OPTIONAL_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
     SensorEntityDescription(
@@ -482,6 +577,8 @@ async def async_setup_entry(
         descriptions += ACC_SENSOR_TYPES
     if getattr(coordinator, "eps_current_enabled", False):
         descriptions += EPS_CURRENT_SENSOR_TYPES
+    if getattr(coordinator, "bms_system_enabled", False):
+        descriptions += BMS_SYSTEM_SENSOR_TYPES
     entities = [
         PylontechSensor(coordinator, description, entry)
         for description in descriptions

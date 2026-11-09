@@ -85,6 +85,12 @@ READ_SITE_LIMIT = 300          # 40937/2   grid import power limit
 # In test.
 READ_MONITOR_EXT = 60          # 30600/60  EPS current, extended bits, AC-coupled PV
 
+# BMS system block (unit 1): summary of all cells and modules (which cell is
+# highest/lowest, cell temperatures), BMS limits, status/alarm/error codes,
+# module and cell count. Read from the block start, as the Pylontech Research
+# integration does. In test.
+READ_BMS_SYSTEM = 60           # 0x1100/79 (BMS, slave 1)
+
 # Logging: a successful optional read is logged at DEBUG (address, duration);
 # enable debug logging for the integration to see every read. A failed read is
 # always logged at WARNING.
@@ -99,6 +105,7 @@ BMS_DEVICE_INFO_BLOCK = (0x1000, 31, 1)
 FAULT_BITS_BLOCK = (30148, 5, 2)
 SITE_LIMIT_BLOCK = (40937, 2, 2)
 MONITOR_EXT_BLOCK = (30600, 60, 2)
+BMS_SYSTEM_BLOCK = (0x1100, 79, 1)
 
 
 def block_interval(block) -> int:
@@ -115,6 +122,7 @@ def block_interval(block) -> int:
         FAULT_BITS_BLOCK[0]: "READ_FAULT_BITS",
         SITE_LIMIT_BLOCK[0]: "READ_SITE_LIMIT",
         MONITOR_EXT_BLOCK[0]: "READ_MONITOR_EXT",
+        BMS_SYSTEM_BLOCK[0]: "READ_BMS_SYSTEM",
     }.get(block[0])
     return max(0, int(globals()[setting])) if setting else 0
 
@@ -257,6 +265,52 @@ def decode_monitor_ext(regs):
     }
 
 
+def _u32(regs, idx):
+    return (regs[idx] << 16) | regs[idx + 1]
+
+
+def decode_bms_system(regs):
+    """BMS 0x1100-0x114E (unit 1): cell/module summary, limits and status.
+
+    Values already read every poll from the pile block (voltage, SOC,
+    temperature, cycles, SOH, cell min/max) are deliberately not repeated.
+    """
+    cell_max = regs[16]   # mV
+    cell_min = regs[17]
+    return {
+        "bms_basic_status": regs[0],
+        "bms_protection_status": regs[1],
+        "bms_alarm_status_1": regs[2],
+        "bms_alarm_status_2": regs[78],
+        "bms_max_charge_voltage": regs[9] * 0.1,
+        "bms_max_charge_current": _u32(regs, 10) * 0.01,
+        "bms_min_discharge_voltage": regs[12] * 0.1,
+        "bms_max_discharge_current": get_32bit_int(regs, 13) * 0.01,
+        "bms_cell_voltage_delta": cell_max - cell_min,
+        "bms_cell_voltage_max_cell": regs[18],
+        "bms_cell_voltage_min_cell": regs[19],
+        "bms_cell_temperature_max": get_16bit_int(regs, 20) * 0.1,
+        "bms_cell_temperature_min": get_16bit_int(regs, 21) * 0.1,
+        "bms_cell_temperature_max_cell": regs[22],
+        "bms_cell_temperature_min_cell": regs[23],
+        "bms_module_voltage_max": regs[24] * 0.01,
+        "bms_module_voltage_min": regs[25] * 0.01,
+        "bms_module_voltage_max_module": regs[26],
+        "bms_module_voltage_min_module": regs[27],
+        "bms_module_temperature_max": get_16bit_int(regs, 28) * 0.1,
+        "bms_module_temperature_min": get_16bit_int(regs, 29) * 0.1,
+        "bms_remaining_energy": _u32(regs, 33) / 1000,
+        "bms_force_charge_request": regs[47],
+        "bms_balance_charge_request": regs[48],
+        "bms_error_code_1": _u32(regs, 50),
+        "bms_error_code_2": _u32(regs, 52),
+        "bms_module_count": regs[54],
+        "bms_cell_count": regs[55],
+        "bms_charge_forbidden": regs[56],
+        "bms_discharge_forbidden": regs[57],
+    }
+
+
 def decode_site_limit(regs):
     """PCS 40937-40938: grid import power limit (U32, W)."""
     return {"grid_import_power_limit": (regs[0] << 16) | regs[1]}
@@ -335,6 +389,11 @@ class PylontechCoordinator(DataUpdateCoordinator):
 
         await asyncio.sleep(delay)
         self._last_modbus_slave = slave
+
+    @property
+    def bms_system_enabled(self) -> bool:
+        """True when the BMS system block (0x1100) is read at all."""
+        return block_interval(BMS_SYSTEM_BLOCK) > 0
 
     @property
     def eps_current_enabled(self) -> bool:
@@ -1002,6 +1061,9 @@ class PylontechCoordinator(DataUpdateCoordinator):
                 if values:
                     self.device_identity.update(values)
                     self._push_device_info()
+                values = await self._read_optional(BMS_SYSTEM_BLOCK, decode_bms_system)
+                if values:
+                    self._slow_values.update(values)
 
             # Slow optional values are cached between their reads, so their
             # sensors do not flip to unknown in between. Only added when this
