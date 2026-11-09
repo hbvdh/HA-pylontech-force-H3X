@@ -300,12 +300,14 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         native_unit_of_measurement=UnitOfElectricPotential.VOLT,
         device_class=SensorDeviceClass.VOLTAGE,
         state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=3,
     ),
     SensorEntityDescription(
         key="bms_cell_voltage_min", name="BMS Cell Voltage Min",
         native_unit_of_measurement=UnitOfElectricPotential.VOLT,
         device_class=SensorDeviceClass.VOLTAGE,
         state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=3,
     ),
     
     # --- Inverter general ---
