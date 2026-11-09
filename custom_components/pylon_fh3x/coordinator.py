@@ -103,7 +103,7 @@ READ_BMS_SYSTEM = 300          # 0x1100/79 (BMS, slave 1)
 # these safety rules) made the dongle hang, so one block at a time: voltages
 # first, temperatures once the voltages ran clean. In test.
 READ_BMS_CELL_VOLTAGES = 900       # 0x1500/n (BMS, slave 1) cell voltages
-READ_BMS_CELL_TEMPERATURES = 0     # 0x1800/n (BMS, slave 1) cell temperatures, not yet
+READ_BMS_CELL_TEMPERATURES = 900   # 0x1800/n (BMS, slave 1) cell temperatures
 
 # Logging: a successful optional read is logged at DEBUG (address, duration);
 # enable debug logging for the integration to see every read. A failed read is
@@ -368,6 +368,18 @@ def _decode_single_block_sample(regs):
     }
 
 
+def _task_cancelled() -> bool:
+    """True when the running task (the poll) is being cancelled.
+
+    pymodbus catches the CancelledError of an awaited request and raises
+    ModbusIOException("Request cancelled outside library") instead, e.g. when
+    Home Assistant stops or the entry reloads mid-poll. The cancel request is
+    still pending on the task, so it can be detected here.
+    """
+    task = asyncio.current_task()
+    return task is not None and task.cancelling() > 0
+
+
 async def _modbus_read(client, address, count, target_id):
     
     try:
@@ -534,10 +546,13 @@ class PylontechCoordinator(DataUpdateCoordinator):
                 else:
                     error = f"Modbus error response: {res}"
             except Exception as err:  # no (valid) answer from the dongle
-                error = f"{type(err).__name__}: {err}"
-                no_answer = True
                 self.client.close()
                 self._last_modbus_slave = None
+                if _task_cancelled():
+                    # Shutdown or reload: no failure, no pause, stop at once.
+                    raise asyncio.CancelledError from err
+                error = f"{type(err).__name__}: {err}"
+                no_answer = True
         duration = time.monotonic() - started
 
         if registers is not None:
@@ -871,6 +886,14 @@ class PylontechCoordinator(DataUpdateCoordinator):
                         error = f"Modbus error response: {res}"
 
                 except (OSError, TimeoutError, ModbusException) as err:
+                    if _task_cancelled():
+                        # Shutdown or reload: not a dongle error, stop at once.
+                        self.client.close()
+                        self._last_modbus_slave = None
+                        _LOGGER.debug(
+                            "Modbus read at %s (Slave %s) cancelled", address, slave
+                        )
+                        raise asyncio.CancelledError from err
                     error = f"{type(err).__name__}: {err}"
 
                 if attempt == 0:

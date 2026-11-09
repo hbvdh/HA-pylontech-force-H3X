@@ -2,6 +2,7 @@
 
 Run with: python -m unittest discover -s tests -v
 """
+import asyncio
 import struct
 from types import SimpleNamespace
 import unittest
@@ -401,6 +402,47 @@ class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(0x1800, self.calls)
 
 
+    async def _cancel_like_pymodbus(self):
+        """What pymodbus does when the awaiting task is cancelled."""
+        asyncio.current_task().cancel()
+        try:
+            await asyncio.get_running_loop().create_future()
+        except asyncio.CancelledError as exc:
+            raise coordinator_module.ModbusException(
+                "Request cancelled outside library."
+            ) from exc
+
+    async def test_cancelled_normal_read_stops_without_retry_or_warning(self):
+        async def response(*, address, count, **kwargs):
+            self.calls.append(address)
+            if address == 30100:
+                await self._cancel_like_pymodbus()
+            return SimpleNamespace(isError=lambda: False, registers=self.blocks[address])
+
+        self.coordinator.client.read_holding_registers.side_effect = response
+        with patch.object(coordinator_module._LOGGER, "warning") as warning:
+            with self.assertRaises(asyncio.CancelledError):
+                await self.coordinator._async_update_data()
+        self.assertEqual(self.calls.count(30100), 1)
+        warning.assert_not_called()
+        self.assertEqual(self.coordinator._bad_polls, 0)
+
+    async def test_cancelled_optional_read_is_no_failure_and_no_pause(self):
+        async def response(*, address, count, **kwargs):
+            self.calls.append(address)
+            if address == 0x1100:
+                await self._cancel_like_pymodbus()
+            return SimpleNamespace(isError=lambda: False, registers=self.blocks[address])
+
+        self.coordinator.client.read_holding_registers.side_effect = response
+        with patch.object(coordinator_module._LOGGER, "warning") as warning:
+            with self.assertRaises(asyncio.CancelledError):
+                await self.coordinator._async_update_data()
+        failed = [c for c in warning.call_args_list if "FAILED" in c.args[0]]
+        self.assertEqual(failed, [])
+        self.assertEqual(self.coordinator._optional_failures.get(0x1100, 0), 0)
+
+
 class DefaultsTests(unittest.IsolatedAsyncioTestCase):
     def test_default_intervals(self):
         self.assertEqual(coordinator_module.READ_IDENTITY, 3600)
@@ -411,8 +453,7 @@ class DefaultsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(coordinator_module.READ_MONITOR_EXT, 300)
         self.assertEqual(coordinator_module.READ_BMS_SYSTEM, 300)
         self.assertEqual(coordinator_module.READ_BMS_CELL_VOLTAGES, 900)
-        # temperatures follow once the voltages ran clean on a live system
-        self.assertEqual(coordinator_module.READ_BMS_CELL_TEMPERATURES, 0)
+        self.assertEqual(coordinator_module.READ_BMS_CELL_TEMPERATURES, 900)
 
     async def test_monitor_ext_reads_from_block_start(self):
         coordinator = coordinator_module.PylontechCoordinator(None, "test", 502)
