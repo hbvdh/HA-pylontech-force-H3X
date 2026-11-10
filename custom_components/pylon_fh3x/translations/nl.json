@@ -8,6 +8,14 @@
           "host": "Host (IP-adres)",
           "port": "Poort"
         }
+      },
+      "reconfigure": {
+        "title": "Verbinding wijzigen",
+        "description": "Wijzig de Modbus TCP-verbindingsgegevens van je omvormer. Entiteiten en geschiedenis blijven behouden.",
+        "data": {
+          "host": "Host (IP-adres)",
+          "port": "Poort"
+        }
       }
     },
     "error": {
@@ -15,7 +23,8 @@
       "unknown": "Er is een onverwachte fout opgetreden."
     },
     "abort": {
-      "already_configured": "Dit apparaat is al geconfigureerd."
+      "already_configured": "Dit apparaat is al geconfigureerd.",
+      "reconfigure_successful": "Verbindingsgegevens bijgewerkt."
     }
   }
 }
