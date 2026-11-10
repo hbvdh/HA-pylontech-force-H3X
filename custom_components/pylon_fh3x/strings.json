@@ -26,5 +26,18 @@
       "already_configured": "Device is already configured.",
       "reconfigure_successful": "Connection details updated."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options",
+        "data": {
+          "battery_details": "Extended battery statistics"
+        },
+        "data_description": {
+          "battery_details": "Reads the BMS summary, all cell voltages and all cell temperatures (every 5 and 15 minutes). Off: these sensors are not created; existing ones become unavailable."
+        }
+      }
+    }
   }
 }

@@ -4,11 +4,17 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 
-from .const import DOMAIN, DEFAULT_PORT, DEFAULT_NAME
+from .const import (
+    DOMAIN,
+    DEFAULT_PORT,
+    DEFAULT_NAME,
+    CONF_BATTERY_DETAILS,
+    DEFAULT_BATTERY_DETAILS,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,6 +40,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Pylontech Force H3X."""
 
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> "OptionsFlowHandler":
+        """Options (Configure button)."""
+        return OptionsFlowHandler()
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -90,6 +104,25 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="reconfigure", data_schema=schema, errors=errors
         )
+
+
+class OptionsFlowHandler(config_entries.OptionsFlow):
+    """Handle the options (Configure) of Pylontech Force H3X."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Show and store the options; saving reloads the integration."""
+        if user_input is not None:
+            return self.async_create_entry(data=user_input)
+
+        current = self.config_entry.options.get(
+            CONF_BATTERY_DETAILS, DEFAULT_BATTERY_DETAILS
+        )
+        schema = vol.Schema(
+            {vol.Required(CONF_BATTERY_DETAILS, default=current): bool}
+        )
+        return self.async_show_form(step_id="init", data_schema=schema)
 
 
 class CannotConnect(HomeAssistantError):

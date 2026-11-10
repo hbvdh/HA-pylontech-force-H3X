@@ -85,8 +85,12 @@ def optional_blocks():
 
 
 class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
+    battery_details = True
+
     def setUp(self):
-        self.coordinator = coordinator_module.PylontechCoordinator(None, "test", 502)
+        self.coordinator = coordinator_module.PylontechCoordinator(
+            None, "test", 502, battery_details=self.battery_details
+        )
         self.coordinator.use_single_block_read = False
         self.blocks = optional_blocks()
         self.refused = set()
@@ -503,3 +507,37 @@ class AlarmDecodeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BatteryDetailsOffTests(OptionalReadTests):
+    """Default of the Configure option: extended battery statistics off."""
+
+    battery_details = False
+
+    def test_default_is_off(self):
+        coordinator = coordinator_module.PylontechCoordinator(None, "test", 502)
+        self.assertFalse(coordinator.battery_details)
+        self.assertFalse(coordinator.bms_system_enabled)
+        self.assertFalse(coordinator.bms_cell_voltages_enabled)
+        self.assertFalse(coordinator.bms_cell_temperatures_enabled)
+
+    async def test_battery_blocks_are_never_read(self):
+        for _ in range(4):
+            self.now += 1000
+            await self.coordinator._async_update_data()
+        for address in (0x1100, 0x1500, 0x1800):
+            self.assertNotIn(address, self.calls)
+        # The other optional blocks are still read.
+        self.assertIn(30148, self.calls)
+
+    # Inherited tests that need the battery blocks do not apply here.
+    test_bms_system_block_is_decoded = None
+    test_bms_system_read_after_normal_bms_read = None
+    test_cell_temperatures_are_signed = None
+    test_cell_voltages_are_decoded_with_count_from_0x1100 = None
+    test_cancelled_optional_read_is_no_failure_and_no_pause = None
+    test_cell_blocks_never_share_a_poll_with_another_optional_read = None
+    test_cell_count_stays_known_while_0x1100_is_paused = None
+    test_cell_temperatures_can_be_off_while_voltages_are_on = None
+    test_implausible_cell_value_is_a_failure_not_a_value = None
+    test_more_cells_than_one_read_are_skipped = None

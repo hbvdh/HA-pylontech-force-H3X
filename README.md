@@ -120,6 +120,10 @@ This integration is easily installable via the [Home Assistant Community Store (
 4. Enter the **IP Address** of your inverter and the **Port** (default is `502`).
 5. Click **Submit**. Your sensors will appear immediately!
 
+**Afterwards:**
+- **Configure** (on the integration card): turn **Extended battery statistics** on or off (BMS summary, all cell voltages and cell temperatures). Off by default. When turned off, these sensors are no longer provided and existing ones become unavailable; you can remove them from the entity list.
+- **⋮ → Reconfigure**: change the IP address or port, e.g. when the inverter got a new IP. Entities and history are kept.
+
 > **⚠️ Important Notice regarding Modbus TCP:** > Modbus TCP usually allows only **one active connection at a time**. If you have an old YAML Modbus configuration in your `configuration.yaml` or another script reading from the inverter, you MUST disable/remove it and restart Home Assistant before adding this integration. Otherwise, the connection will be refused.
 
 ---

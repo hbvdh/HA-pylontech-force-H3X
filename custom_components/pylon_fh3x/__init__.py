@@ -5,7 +5,13 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN, CONF_HOST, CONF_PORT
+from .const import (
+    DOMAIN,
+    CONF_HOST,
+    CONF_PORT,
+    CONF_BATTERY_DETAILS,
+    DEFAULT_BATTERY_DETAILS,
+)
 from .coordinator import PylontechCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -24,7 +30,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     port = entry.data[CONF_PORT]
 
     # Initialize the shared coordinator used by all entity platforms.
-    coordinator = PylontechCoordinator(hass, host, port)
+    battery_details = entry.options.get(
+        CONF_BATTERY_DETAILS, DEFAULT_BATTERY_DETAILS
+    )
+    coordinator = PylontechCoordinator(hass, host, port, battery_details)
     # Lets the coordinator update the device registry (firmware, model).
     coordinator.config_entry_ref = entry
 
@@ -36,6 +45,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Reload when the options (Configure) change.
+    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
     return True
 
@@ -51,3 +63,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN].pop(entry.entry_id)
 
     return unload_ok
+
+
+async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload the integration after the options were changed."""
+    await hass.config_entries.async_reload(entry.entry_id)
