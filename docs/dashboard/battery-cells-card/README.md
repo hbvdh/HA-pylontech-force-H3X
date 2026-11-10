@@ -3,7 +3,8 @@
 An overview of the Force H3X battery built as a single
 [button-card](https://github.com/custom-cards/button-card): BMS summary at the
 top (SOC, remaining energy, voltage, current, SOH, cycles, temperatures, cell
-delta, charge/discharge limits, BMS alarm) with the charge/discharge state
+delta, charge/discharge limits, BMS alarm, and with integration 1.3.2 or later
+grid mode and energy charged/discharged today) with the charge/discharge state
 beside it, and below that one column per battery module showing every cell.
 
 Each cell is drawn as a small vessel filled to the current SOC. Its shade shows

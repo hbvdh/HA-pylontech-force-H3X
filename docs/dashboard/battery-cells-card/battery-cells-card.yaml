@@ -109,6 +109,19 @@ custom_fields:
         ['Max ontladen', abs('bms_max_discharge_current', 0) + ' A'],
         ['BMS-alarm', '<span style="color:' + alarmCol + '">' + alarmTxt + '</span>'],
       ];
+      // Integration 1.3.2+: only shown when the sensors exist.
+      const gm = E('grid_mode');
+      if (gm) {
+        const code = Number(gm.attributes.code);
+        const gmTxt = code === 1 ? 'Aan het net' : code === 2 ? 'Backup'
+          : (gm.state === 'unknown' || gm.state === 'unavailable' ? '–' : gm.state);
+        const gmCol = code === 2 ? 'var(--warning-color, #ffa600)' : 'var(--primary-text-color)';
+        items.push(['Netmodus', '<span style="color:' + gmCol + '">' + gmTxt + '</span>']);
+      }
+      if (E('bms_charge_energy_today')) {
+        items.push(['Geladen vandaag', kilo('bms_charge_energy_today', 2) + ' kWh']);
+        items.push(['Ontladen vandaag', kilo('bms_discharge_energy_today', 2) + ' kWh']);
+      }
       const status = S('battery_status') || '';
       let icon = 'mdi:minus', col = 'var(--secondary-text-color)', txt = status || '–';
       if (status === 'Charging') { icon = 'mdi:arrow-up-bold'; col = 'var(--success-color, #43a047)'; txt = 'Laden'; }
