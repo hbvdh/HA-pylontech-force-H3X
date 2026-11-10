@@ -69,6 +69,11 @@ def optional_blocks():
     system[33:35] = [0, 3584]       # remaining energy 3.584 kWh
     system[24], system[25] = 10446, 10444  # module voltage 104.46 / 104.44 V
     system[54], system[55] = 3, 96  # modules, cells
+    system[39:41] = [0, 2350]       # charged today 2.350 kWh
+    system[41:43] = [0, 1870]       # discharged today 1.870 kWh
+    system[72], system[73] = 5000, 0       # insulation 5000 kOhm, level 0
+    system[74], system[75] = 231, 0xFFF6   # terminal temp 23.1 / -1.0 degC
+    system[76], system[77] = 2, 5          # which terminal
     blocks[0x1100] = system
     cells = [3265] * 96
     cells[11], cells[36] = 3258, 3271   # cell 12 lowest, cell 37 highest
@@ -300,6 +305,17 @@ class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["bms_cell_count"], 96)
         self.assertAlmostEqual(data["bms_module_voltage_max"], 104.46, places=3)
         self.assertEqual(data["bms_error_code_1"], 0)
+        self.assertEqual(data["bms_insulation_resistance"], 5000)
+        self.assertEqual(data["bms_insulation_error_level"], 0)
+        self.assertAlmostEqual(data["bms_terminal_temperature_max"], 23.1, places=3)
+        self.assertAlmostEqual(data["bms_terminal_temperature_min"], -1.0, places=3)
+        self.assertEqual(data["bms_terminal_temperature_max_channel"], 2)
+        self.assertEqual(data["bms_terminal_temperature_min_channel"], 5)
+        # daily counters need one confirming poll, like every counter
+        self.assertNotIn("bms_charge_energy_today", data)
+        data = await self.poll()
+        self.assertAlmostEqual(data["bms_charge_energy_today"], 2.35, places=3)
+        self.assertAlmostEqual(data["bms_discharge_energy_today"], 1.87, places=3)
         # the per-poll pile values are not overwritten by the system block
         self.assertEqual(data["bms_soc"], self.blocks[5123][4])
 

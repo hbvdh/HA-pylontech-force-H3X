@@ -89,6 +89,8 @@ def valid_blocks():
     for offset in (0, 2, 18, 20):
         put_float(battery, offset, 1000)
     battery[5], battery[8], battery[9], battery[26] = 2, 4000, 25, 50
+    battery[4] = 1                  # 30160 grid-tied
+    main[42] = 4200                 # 30142 isolation 4200 kOhm
     put_int(battery, 6, 1000)
     blocks[5123][0:6] = [4000, 0, 0, 250, 50, 100]
     blocks[5123][13:15] = [3350, 3300]
@@ -120,6 +122,13 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         data = await self.coordinator._async_update_data()
         self.coordinator.data = data
         return data
+
+    async def test_grid_mode_and_isolation_come_from_the_normal_poll(self):
+        data = await self.poll()
+        self.assertEqual(data["grid_mode"], 1)
+        self.assertEqual(data["isolation_resistance"], 4200)
+        self.blocks[30156][4] = 2   # backup
+        self.assertEqual((await self.poll())["grid_mode"], 2)
 
     async def test_impossible_battery_power_never_reaches_ha_data(self):
         put_int(self.blocks[30156], 6, 700_000_000)
