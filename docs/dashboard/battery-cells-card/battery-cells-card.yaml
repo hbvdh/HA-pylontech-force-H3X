@@ -16,6 +16,8 @@ triggers_update: all
 grid_options:
   columns: full
   rows: auto
+extra_styles: |
+  @keyframes h3xbob { from { transform: translateY(-3px); } to { transform: translateY(3px); } }
 styles:
   card:
     - padding: 12px
@@ -124,6 +126,8 @@ custom_fields:
         items.push(['Geladen vandaag', kilo('bms_charge_energy_today', 2) + ' kWh']);
         items.push(['Ontladen vandaag', kilo('bms_discharge_energy_today', 2) + ' kWh']);
       }
+      const socRaw = parseFloat(S('bms_soc'));
+      const SOC = isNaN(socRaw) ? 0 : Math.max(0, Math.min(100, socRaw));
       const status = S('battery_status') || '';
       let icon = 'mdi:minus', col = 'var(--secondary-text-color)', txt = status || '–';
       if (status === 'Charging') { icon = 'mdi:arrow-up-bold'; col = 'var(--success-color, #43a047)'; txt = 'Laden'; }
@@ -143,9 +147,30 @@ custom_fields:
           + '<div style="font-size:13px;font-weight:500;color:var(--primary-text-color);overflow-wrap:anywhere;">' + value + '</div></div>';
       }
       h += '</div>';
-      h += '<div style="' + box + 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;text-align:center;">'
-        + '<ha-icon icon="' + icon + '" style="--mdc-icon-size:34px;color:' + col + ';"></ha-icon>'
-        + '<div style="font-size:14px;font-weight:500;">' + txt + '</div>'
+      // Status: SOC ring around the arrow. Ring green like the water, amber
+      // below 30%, red below 15%. The arrow bobs faster with more power; at rest
+      // it stands still. The phase follows the clock, so a re-render does not
+      // restart the animation.
+      const pRaw = parseFloat(S('battery_power'));
+      const pKw = isNaN(pRaw) ? 0 : Math.abs((U('battery_power') === 'W') ? pRaw / 1000 : pRaw);
+      const moving = icon !== 'mdi:minus' && pKw >= 0.05;
+      const dur = Math.max(0.6, Math.min(2.4, 2.4 - pKw * 0.35));
+      const delay = -((Date.now() / 1000) % (2 * dur));
+      const anim = moving
+        ? 'animation:h3xbob ' + dur.toFixed(2) + 's ease-in-out ' + delay.toFixed(2) + 's infinite alternate;'
+        : '';
+      const ringCol = SOC < 15 ? 'var(--error-color, #db4437)' : SOC < 30 ? 'var(--warning-color, #ffa600)' : GREEN;
+      const R = 36, CIRC = 2 * Math.PI * R;
+      const socTxt = isNaN(socRaw) ? '–' : Math.round(socRaw) + '%';
+      h += '<div style="' + box + 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;text-align:center;">'
+        + '<div style="position:relative;width:84px;height:84px;">'
+        + '<svg viewBox="0 0 84 84" width="84" height="84" style="display:block;">'
+        + '<circle cx="42" cy="42" r="' + R + '" fill="none" stroke-width="7" style="stroke:color-mix(in srgb, var(--primary-text-color) 15%, transparent);"></circle>'
+        + '<circle cx="42" cy="42" r="' + R + '" fill="none" stroke-width="7" stroke-linecap="round" transform="rotate(-90 42 42)"'
+        + ' stroke-dasharray="' + (CIRC * SOC / 100).toFixed(1) + ' ' + CIRC.toFixed(1) + '" style="stroke:' + ringCol + ';"></circle></svg>'
+        + '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;">'
+        + '<ha-icon icon="' + icon + '" style="--mdc-icon-size:32px;color:' + col + ';' + anim + '"></ha-icon></div></div>'
+        + '<div style="font-size:14px;font-weight:500;">' + txt + ' · ' + socTxt + '</div>'
         + '<div style="font-size:12px;color:var(--secondary-text-color);">' + kilo('battery_power', 2) + ' kW</div></div>';
       h += '</div>';
 
@@ -155,8 +180,6 @@ custom_fields:
           : 'Geen celdata: zet "Extended battery statistics" aan onder Configure van de integratie.';
         return h + '<div style="color:var(--secondary-text-color);font-size:13px;">' + why + '</div></div>';
       }
-      const socRaw = parseFloat(S('bms_soc'));
-      const SOC = isNaN(socRaw) ? 0 : Math.max(0, Math.min(100, socRaw));
       const redLimit = SOC >= RED_SOC ? RED_MV_TOP : RED_MV;
       const PER = V.length / MODS;
       const avg = V.reduce((a, b) => a + b, 0) / V.length;
