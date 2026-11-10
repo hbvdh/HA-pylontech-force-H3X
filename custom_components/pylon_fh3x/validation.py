@@ -30,6 +30,26 @@ VALUE_RANGES = {
     "ac_total_power": (-INVERTER_POWER_LIMIT, INVERTER_POWER_LIMIT),
     "battery_power": (-INVERTER_POWER_LIMIT, INVERTER_POWER_LIMIT),
     "eps_power": (-INVERTER_POWER_LIMIT, INVERTER_POWER_LIMIT),
+    "eps_voltage": (0, 350),
+    "eps_frequency": (0, 70),
+    "eps_enable": (0, 1),
+    **{f"eps_current_{phase}": (0, 100) for phase in "rst"},
+    "bms_max_charge_voltage": (0, 1000),
+    "bms_min_discharge_voltage": (0, 1000),
+    "bms_max_charge_current": (0, 500),
+    "bms_max_discharge_current": (-500, 500),
+    "bms_cell_voltage_delta": (0, 1000),
+    "bms_cell_temperature_max": (-40, 100),
+    "bms_cell_temperature_min": (-40, 100),
+    # A module is a series string of cells (e.g. 32 x 3.3 V = ~105 V on the
+    # FH3X battery), not a 48 V module.
+    "bms_module_voltage_max": (0, 300),
+    "bms_module_voltage_min": (0, 300),
+    "bms_module_temperature_max": (-40, 100),
+    "bms_module_temperature_min": (-40, 100),
+    "bms_remaining_energy": (0, 1000),
+    "bms_module_count": (0, 100),
+    "bms_cell_count": (0, 1000),
     "grid_total_power": (-GRID_POWER_LIMIT, GRID_POWER_LIMIT),
     "pv_total_power": (0, PV_TOTAL_POWER_LIMIT),
     "battery_voltage": (0, 1000),
@@ -58,6 +78,14 @@ VALUE_RANGES = {
     **{f"ac_current_{phase}": (0, 100) for phase in "rst"},
     **{f"grid_current_{phase}": (-1000, 1000) for phase in "rst"},
     **{f"grid_power_{phase}": (-350_000, 350_000) for phase in "rst"},
+    # Optional reads (third-party meter / AC-coupled PV, faults, limits).
+    "third_party_meter_power": (-PV_POWER_LIMIT, PV_POWER_LIMIT),
+    "acc_power_total": (-PV_POWER_LIMIT, PV_POWER_LIMIT),
+    **{f"acc_power_{phase}": (-PV_POWER_LIMIT, PV_POWER_LIMIT) for phase in "rst"},
+    "grid_import_power_limit": (0, GRID_POWER_LIMIT),
+    "fault_code": (0, 0xFFFF),
+    "warning_code": (0, 0xFFFF),
+    "firmware_update_state": (0, 0xFFFF),
 }
 
 # Maximum counter growth per second. Lifetime grid counters use a tighter
@@ -68,6 +96,8 @@ COUNTER_RATES = {
     "total_grid_export": GRID_COUNTER_POWER_LIMIT / 3_600_000,
     "total_battery_charge": INVERTER_POWER_LIMIT / 3_600_000,
     "total_battery_discharge": INVERTER_POWER_LIMIT / 3_600_000,
+    "third_party_meter_energy": PV_POWER_LIMIT / 3_600_000,
+    "eps_output_energy": INVERTER_POWER_LIMIT / 3_600_000,
     "bms_cycles": 100 / 86400,
 }
 VALUE_RANGES.update({key: (0, 10_000_000) for key in COUNTER_RATES if key != "bms_cycles"})

@@ -5,7 +5,7 @@ No physical inverter or Home Assistant installation is contacted.
 """
 
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import patch, AsyncMock
 
 from test_coordinator import coordinator_module, valid_blocks
 TelemetryTransitionGuard = coordinator_module.TelemetryTransitionGuard
@@ -68,6 +68,11 @@ class TemporalCoordinatorTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.coordinator = coordinator_module.PylontechCoordinator(None, "test", 502)
         self.coordinator.use_single_block_read = False
+        # These tests replace safe_read only; keep the optional reads (which use
+        # the client directly) out of them.
+        patcher = patch.object(coordinator_module, "ENABLE_OPTIONAL_READS", False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.coordinator._transition_guard.remember({
             "heatsink_temperature": 35.0,
             "inverter_temperature": 30.0,
@@ -238,6 +243,11 @@ class ConfirmedChangeLoggingTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.coordinator = coordinator_module.PylontechCoordinator(None, "test", 502)
         self.coordinator.use_single_block_read = False
+        # These tests replace safe_read only; keep the optional reads (which use
+        # the client directly) out of them.
+        patcher = patch.object(coordinator_module, "ENABLE_OPTIONAL_READS", False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.coordinator._transition_guard.remember({"pv1_voltage": 75.0})
 
     def setup_pv1(self, first_raw, retry_raw):

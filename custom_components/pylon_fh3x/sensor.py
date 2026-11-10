@@ -17,15 +17,25 @@ from homeassistant.const import (
     UnitOfTemperature,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.const import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .alarms import (
+    FIRMWARE_UPDATE_STATE_MAP,
+    PCS_FAULTS,
+    PCS_WARNINGS,
+    active_issues,
+    combined_bits,
+    issues_state,
+)
+from .device import device_info
 from .const import DOMAIN, MANUFACTURER, MODEL
 
-# Hier definiëren we alle sensoren. De 'key' moet exact overeenkomen 
-# met de naam die we in coordinator.py aan de data dictionary hebben gegeven!
+# All sensors are defined here. Each 'key' must match exactly the key
+# coordinator.py uses in the data dictionary.
 SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
-    # --- Status Sensoren ---
+    # --- Status sensors ---
     SensorEntityDescription(
         key="inverter_status",
         name="Inverter Status",
@@ -217,7 +227,7 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
     ),
 
-    # --- Batterij (Omvormer registers) ---
+    # --- Battery (inverter registers) ---
     SensorEntityDescription(
         key="battery_power", name="Battery Power",
         native_unit_of_measurement=UnitOfPower.WATT,
@@ -290,15 +300,17 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         native_unit_of_measurement=UnitOfElectricPotential.VOLT,
         device_class=SensorDeviceClass.VOLTAGE,
         state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=3,
     ),
     SensorEntityDescription(
         key="bms_cell_voltage_min", name="BMS Cell Voltage Min",
         native_unit_of_measurement=UnitOfElectricPotential.VOLT,
         device_class=SensorDeviceClass.VOLTAGE,
         state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=3,
     ),
     
-    # --- Omvormer Algemeen ---
+    # --- Inverter general ---
     SensorEntityDescription(
         key="inverter_temperature", name="Inverter Temperature",
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
@@ -312,6 +324,257 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.TEMPERATURE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
+
+    # --- EPS (backup) output, registers 30170-30181 ---
+    SensorEntityDescription(
+        key="eps_voltage", name="EPS Voltage",
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        device_class=SensorDeviceClass.VOLTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+    ),
+    SensorEntityDescription(
+        key="eps_frequency", name="EPS Frequency",
+        native_unit_of_measurement=UnitOfFrequency.HERTZ,
+        device_class=SensorDeviceClass.FREQUENCY,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=2,
+    ),
+    SensorEntityDescription(
+        key="eps_power", name="EPS Power",
+        native_unit_of_measurement=UnitOfPower.WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    SensorEntityDescription(
+        key="eps_output_energy", name="EPS Output Energy",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        suggested_display_precision=2,
+    ),
+)
+
+
+# --- Optional 30600 block: AC-coupled PV (only when READ_MONITOR_EXT is on) ---
+# Disabled by default: the Third Party Meter values already cover AC-coupled PV.
+ACC_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
+    SensorEntityDescription(
+        key="acc_power_total", name="AC Coupled PV Power",
+        native_unit_of_measurement=UnitOfPower.WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_registry_enabled_default=False,
+    ),
+    *(
+        SensorEntityDescription(
+            key=f"acc_power_{phase}", name=f"AC Coupled PV Power {phase.upper()}",
+            native_unit_of_measurement=UnitOfPower.WATT,
+            device_class=SensorDeviceClass.POWER,
+            state_class=SensorStateClass.MEASUREMENT,
+            entity_registry_enabled_default=False,
+        )
+        for phase in "rst"
+    ),
+)
+
+# --- Optional 30600 block: EPS current (only when READ_MONITOR_EXT is on) ---
+EPS_CURRENT_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = tuple(
+    SensorEntityDescription(
+        key=f"eps_current_{phase}", name=f"EPS Current {phase.upper()}",
+        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        device_class=SensorDeviceClass.CURRENT,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+        # S and T only exist on a three-phase H3X
+        entity_registry_enabled_default=(phase == "r"),
+    )
+    for phase in "rst"
+)
+
+# --- Optional BMS system block 0x1100 (only when READ_BMS_SYSTEM is on) -------
+def _bms_diag(key, name, **kwargs):
+    """Diagnostic BMS sensor, disabled by default."""
+    return SensorEntityDescription(
+        key=key, name=name, entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False, **kwargs,
+    )
+
+
+BMS_SYSTEM_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
+    SensorEntityDescription(
+        key="bms_cell_voltage_delta", name="BMS Cell Voltage Delta",
+        native_unit_of_measurement="mV", state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:battery-sync",
+    ),
+    SensorEntityDescription(
+        key="bms_cell_temperature_max", name="BMS Cell Temperature Max",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=1,
+    ),
+    SensorEntityDescription(
+        key="bms_cell_temperature_min", name="BMS Cell Temperature Min",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=1,
+    ),
+    SensorEntityDescription(
+        key="bms_max_charge_current", name="BMS Max Charge Current",
+        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        device_class=SensorDeviceClass.CURRENT,
+        state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=1,
+    ),
+    SensorEntityDescription(
+        key="bms_max_discharge_current", name="BMS Max Discharge Current",
+        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        device_class=SensorDeviceClass.CURRENT,
+        state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=1,
+    ),
+    SensorEntityDescription(
+        key="bms_remaining_energy", name="BMS Remaining Energy",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY_STORAGE,
+        state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=2,
+    ),
+    _bms_diag("bms_cell_voltage_max_cell", "BMS Cell Voltage Max Cell", icon="mdi:numeric"),
+    _bms_diag("bms_cell_voltage_min_cell", "BMS Cell Voltage Min Cell", icon="mdi:numeric"),
+    _bms_diag("bms_cell_temperature_max_cell", "BMS Cell Temperature Max Cell", icon="mdi:numeric"),
+    _bms_diag("bms_cell_temperature_min_cell", "BMS Cell Temperature Min Cell", icon="mdi:numeric"),
+    _bms_diag(
+        "bms_module_voltage_max", "BMS Module Voltage Max",
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        device_class=SensorDeviceClass.VOLTAGE, suggested_display_precision=2,
+    ),
+    _bms_diag(
+        "bms_module_voltage_min", "BMS Module Voltage Min",
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        device_class=SensorDeviceClass.VOLTAGE, suggested_display_precision=2,
+    ),
+    _bms_diag("bms_module_voltage_max_module", "BMS Module Voltage Max Module", icon="mdi:numeric"),
+    _bms_diag("bms_module_voltage_min_module", "BMS Module Voltage Min Module", icon="mdi:numeric"),
+    _bms_diag(
+        "bms_module_temperature_max", "BMS Module Temperature Max",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        device_class=SensorDeviceClass.TEMPERATURE, suggested_display_precision=1,
+    ),
+    _bms_diag(
+        "bms_module_temperature_min", "BMS Module Temperature Min",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        device_class=SensorDeviceClass.TEMPERATURE, suggested_display_precision=1,
+    ),
+    _bms_diag(
+        "bms_max_charge_voltage", "BMS Max Charge Voltage",
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        device_class=SensorDeviceClass.VOLTAGE, suggested_display_precision=1,
+    ),
+    _bms_diag(
+        "bms_min_discharge_voltage", "BMS Min Discharge Voltage",
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        device_class=SensorDeviceClass.VOLTAGE, suggested_display_precision=1,
+    ),
+    _bms_diag("bms_module_count", "BMS Module Count", icon="mdi:counter"),
+    _bms_diag("bms_cell_count", "BMS Cell Count", icon="mdi:counter"),
+    _bms_diag("bms_basic_status", "BMS Basic Status", icon="mdi:information-outline"),
+    _bms_diag("bms_protection_status", "BMS Protection Status", icon="mdi:shield-alert-outline"),
+    _bms_diag("bms_alarm_status_1", "BMS Alarm Status 1", icon="mdi:alert-outline"),
+    _bms_diag("bms_alarm_status_2", "BMS Alarm Status 2", icon="mdi:alert-outline"),
+    _bms_diag("bms_error_code_1", "BMS Error Code 1", icon="mdi:alert-circle-outline"),
+    _bms_diag("bms_error_code_2", "BMS Error Code 2", icon="mdi:alert-circle-outline"),
+    _bms_diag("bms_charge_forbidden", "BMS Charge Forbidden", icon="mdi:battery-off-outline"),
+    _bms_diag("bms_discharge_forbidden", "BMS Discharge Forbidden", icon="mdi:battery-off-outline"),
+    _bms_diag("bms_force_charge_request", "BMS Force Charge Request", icon="mdi:battery-alert"),
+    _bms_diag("bms_balance_charge_request", "BMS Balance Charge Request", icon="mdi:battery-sync"),
+)
+
+# --- Optional reads: third-party meter, codes, limits -------------------------
+OPTIONAL_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
+    SensorEntityDescription(
+        key="third_party_meter_power", name="Third Party Meter Power",
+        native_unit_of_measurement=UnitOfPower.WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    SensorEntityDescription(
+        key="third_party_meter_energy", name="Third Party Meter Energy",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+    ),
+    SensorEntityDescription(
+        key="grid_import_power_limit", name="Grid Import Power Limit",
+        native_unit_of_measurement=UnitOfPower.WATT,
+        device_class=SensorDeviceClass.POWER,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:transmission-tower-import",
+    ),
+    SensorEntityDescription(
+        key="fault_code", name="Fault Code",
+        entity_category=EntityCategory.DIAGNOSTIC, icon="mdi:alert-circle-outline",
+    ),
+    SensorEntityDescription(
+        key="warning_code", name="Warning Code",
+        entity_category=EntityCategory.DIAGNOSTIC, icon="mdi:alert-outline",
+    ),
+)
+
+
+# --- Static device information (re-read hourly) -----------------------------
+FIRMWARE_UPDATE_STATE_SENSOR = SensorEntityDescription(
+    key="firmware_update_state", name="Firmware Update State",
+    entity_category=EntityCategory.DIAGNOSTIC, icon="mdi:update",
+)
+
+IDENTITY_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
+    SensorEntityDescription(
+        key="pcs_software_version", name="PCS Software Version",
+        entity_category=EntityCategory.DIAGNOSTIC, icon="mdi:chip",
+    ),
+    SensorEntityDescription(
+        key="pcs_afci_firmware_version", name="AFCI Firmware Version",
+        entity_category=EntityCategory.DIAGNOSTIC, icon="mdi:chip",
+    ),
+    SensorEntityDescription(
+        key="bms_main_version", name="BMS Main Version",
+        entity_category=EntityCategory.DIAGNOSTIC, icon="mdi:chip",
+    ),
+    SensorEntityDescription(
+        key="bms_hmi_version", name="BMS HMI Version",
+        entity_category=EntityCategory.DIAGNOSTIC, icon="mdi:chip",
+    ),
+    SensorEntityDescription(
+        key="pcs_max_output_power", name="PCS Max Output Power",
+        native_unit_of_measurement=UnitOfPower.WATT,
+        device_class=SensorDeviceClass.POWER,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+)
+
+# --- Decoded fault / warning bits ------------------------------------------------
+ISSUE_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
+    SensorEntityDescription(
+        key="fault_bits", name="Inverter Faults",
+        entity_category=EntityCategory.DIAGNOSTIC, icon="mdi:alert-circle",
+    ),
+    SensorEntityDescription(
+        key="warning_bits", name="Inverter Warnings",
+        entity_category=EntityCategory.DIAGNOSTIC, icon="mdi:alert",
+    ),
+)
+
+
+# Individual cells: one average sensor per block, every cell as attribute.
+BMS_CELL_VOLTAGES_SENSOR = SensorEntityDescription(
+    key="bms_cell_voltage_avg", name="BMS Cell Voltage Average",
+    native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+    device_class=SensorDeviceClass.VOLTAGE,
+    state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=3,
+)
+BMS_CELL_TEMPERATURES_SENSOR = SensorEntityDescription(
+    key="bms_cell_temperature_avg", name="BMS Cell Temperature Average",
+    native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+    device_class=SensorDeviceClass.TEMPERATURE,
+    state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=1,
 )
 
 
@@ -323,10 +586,44 @@ async def async_setup_entry(
     """Set up Pylontech sensor based on a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
 
-    # Maak voor elke definitie hierboven een PylontechSensor object aan
+    # Create a PylontechSensor for each description above
+    descriptions = SENSOR_TYPES + OPTIONAL_SENSOR_TYPES
+    # AC-coupled PV only exists when the 30600 block is read; otherwise these
+    # sensors would stay empty.
+    if getattr(coordinator, "ac_coupled_pv_enabled", False):
+        descriptions += ACC_SENSOR_TYPES
+    if getattr(coordinator, "eps_current_enabled", False):
+        descriptions += EPS_CURRENT_SENSOR_TYPES
+    if getattr(coordinator, "bms_system_enabled", False):
+        descriptions += BMS_SYSTEM_SENSOR_TYPES
     entities = [
         PylontechSensor(coordinator, description, entry)
-        for description in SENSOR_TYPES
+        for description in descriptions
+    ]
+    entities.append(
+        PylontechFirmwareStateSensor(coordinator, FIRMWARE_UPDATE_STATE_SENSOR, entry)
+    )
+    if getattr(coordinator, "bms_cell_voltages_enabled", False):
+        entities.append(
+            PylontechCellSensor(
+                coordinator, BMS_CELL_VOLTAGES_SENSOR, entry,
+                cells_key="bms_cell_voltages", spread_scale=1000,
+            )
+        )
+    if getattr(coordinator, "bms_cell_temperatures_enabled", False):
+        entities.append(
+            PylontechCellSensor(
+                coordinator, BMS_CELL_TEMPERATURES_SENSOR, entry,
+                cells_key="bms_cell_temperatures", spread_scale=1,
+            )
+        )
+    entities += [
+        PylontechIdentitySensor(coordinator, description, entry)
+        for description in IDENTITY_SENSOR_TYPES
+    ]
+    entities += [
+        PylontechIssueSensor(coordinator, description, entry)
+        for description in ISSUE_SENSOR_TYPES
     ]
 
     async_add_entities(entities)
@@ -347,19 +644,109 @@ class PylontechSensor(CoordinatorEntity, SensorEntity):
         super().__init__(coordinator)
         self.entity_description = description
         
-        # Zorgt voor unieke ID's in de database
+        # Unique ID in the entity registry
         self._attr_unique_id = f"{DOMAIN}_{entry.data['host']}_{description.key}"
 
-        # Dit groepeert alle sensoren onder één Apparaat in Home Assistant
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, entry.entry_id)},
-            "name": entry.title,
-            "manufacturer": MANUFACTURER,
-            "model": MODEL,
-        }
+        # Groups all sensors under one device in Home Assistant
+        self._attr_device_info = device_info(coordinator, entry)
 
     @property
     def native_value(self):
         """Return the state of the sensor."""
-        # Haal de waarde op uit de dictionary die we in coordinator.py hebben gebouwd
+        # Value from the data dictionary built in coordinator.py
         return self.coordinator.data.get(self.entity_description.key)
+
+
+class PylontechFirmwareStateSensor(PylontechSensor):
+    """Firmware update state (30152) as text, raw value as attribute."""
+
+    @property
+    def _raw(self):
+        return (self.coordinator.data or {}).get(self.entity_description.key)
+
+    @property
+    def native_value(self):
+        raw = self._raw
+        if raw is None:
+            return None
+        return FIRMWARE_UPDATE_STATE_MAP.get(raw, f"Unknown ({raw})")
+
+    @property
+    def extra_state_attributes(self):
+        return {"code": self._raw}
+
+
+class PylontechIdentitySensor(PylontechSensor):
+    """Static device information (re-read hourly to catch firmware updates)."""
+
+    @property
+    def native_value(self):
+        return getattr(self.coordinator, "device_identity", {}).get(
+            self.entity_description.key
+        )
+
+    @property
+    def available(self) -> bool:
+        return self.native_value is not None
+
+
+class PylontechIssueSensor(PylontechSensor):
+    """Active faults or warnings as readable text, raw bits as attributes."""
+
+    @property
+    def _bits(self):
+        return combined_bits(self.coordinator.data or {}, self.entity_description.key)
+
+    @property
+    def _names(self):
+        return PCS_FAULTS if self.entity_description.key == "fault_bits" else PCS_WARNINGS
+
+    @property
+    def native_value(self):
+        bits = self._bits
+        if bits is None:
+            return None
+        return issues_state(active_issues(bits, self._names))
+
+    @property
+    def extra_state_attributes(self):
+        data = self.coordinator.data or {}
+        bits = self._bits
+        code_key = "fault_code" if self.entity_description.key == "fault_bits" else "warning_code"
+        return {
+            "active_issues": active_issues(bits, self._names) if bits is not None else [],
+            "raw_bits": bits,
+            "code": data.get(code_key),
+        }
+
+
+class PylontechCellSensor(PylontechSensor):
+    """Average of all cells; every cell, min/max and spread as attributes.
+
+    The full cell list is not written to the recorder (96 values per state
+    change); min, max, which cell and the spread are, as small numbers.
+    Cells are numbered from 1, as in the Pylontech Research library; compare
+    max_cell/min_cell with the 0x1100 cell index sensors to confirm the base.
+    """
+
+    _unrecorded_attributes = frozenset({"cells"})
+
+    def __init__(self, coordinator, description, entry, *, cells_key, spread_scale):
+        super().__init__(coordinator, description, entry)
+        self._cells_key = cells_key
+        self._spread_scale = spread_scale  # V -> mV for voltages
+
+    @property
+    def extra_state_attributes(self):
+        cells = (self.coordinator.data or {}).get(self._cells_key)
+        if not cells:
+            return {}
+        low, high = min(cells), max(cells)
+        return {
+            "min": low,
+            "min_cell": cells.index(low) + 1,
+            "max": high,
+            "max_cell": cells.index(high) + 1,
+            "spread": round((high - low) * self._spread_scale, 1),
+            "cells": list(cells),
+        }

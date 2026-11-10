@@ -127,6 +127,32 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(data.get("battery_power"))
         self.assertEqual(data["battery_soc"], 50)
 
+    async def test_eps_values_are_decoded(self):
+        battery = self.blocks[30156]
+        battery[14], battery[15] = 2301, 5001          # 30170, 30171
+        put_int(battery, 16, -1200)                     # 30172
+        put_float(battery, 24, 12.5)                    # 30180
+        self.blocks[40901][3] = 1                       # 40904
+        first = await self.poll()
+        # like every energy counter, the first value needs a confirming sample
+        self.assertNotIn("eps_output_energy", first)
+        data = await self.poll()
+        self.assertAlmostEqual(data["eps_voltage"], 230.1, places=3)
+        self.assertAlmostEqual(data["eps_frequency"], 50.01, places=3)
+        self.assertEqual(data["eps_power"], -1200)
+        self.assertAlmostEqual(data["eps_output_energy"], 12.5, places=3)
+        self.assertEqual(data["eps_enable"], 1)
+
+    async def test_impossible_eps_values_are_rejected(self):
+        battery = self.blocks[30156]
+        battery[14], battery[15] = 9000, 9000
+        self.blocks[40901][3] = 7
+        data = await self.poll()
+        self.assertNotIn("eps_voltage", data)
+        self.assertNotIn("eps_frequency", data)
+        self.assertNotIn("eps_enable", data)
+        self.assertEqual(data["battery_soc"], 50)
+
     async def test_corrupt_sources_cannot_cancel_into_valid_load(self):
         put_int(self.blocks[30100], 0, 700_000_000)
         put_int(self.blocks[30100], 8, -699_999_000)
