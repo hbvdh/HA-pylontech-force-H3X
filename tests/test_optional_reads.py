@@ -69,6 +69,11 @@ def optional_blocks():
     system[33:35] = [0, 3584]       # remaining energy 3.584 kWh
     system[24], system[25] = 10446, 10444  # module voltage 104.46 / 104.44 V
     system[54], system[55] = 3, 96  # modules, cells
+    system[39:41] = [0, 2350]       # charged today 2.350 kWh
+    system[41:43] = [0, 1870]       # discharged today 1.870 kWh
+    system[72], system[73] = 5000, 0       # insulation 5000 kOhm, level 0
+    system[74], system[75] = 231, 0xFFF6   # terminal temp 23.1 / -1.0 degC
+    system[76], system[77] = 2, 5          # which terminal
     blocks[0x1100] = system
     cells = [3265] * 96
     cells[11], cells[36] = 3258, 3271   # cell 12 lowest, cell 37 highest
@@ -300,8 +305,36 @@ class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["bms_cell_count"], 96)
         self.assertAlmostEqual(data["bms_module_voltage_max"], 104.46, places=3)
         self.assertEqual(data["bms_error_code_1"], 0)
+        self.assertEqual(data["bms_insulation_resistance"], 5000)
+        self.assertEqual(data["bms_insulation_error_level"], 0)
+        self.assertAlmostEqual(data["bms_terminal_temperature_max"], 23.1, places=3)
+        self.assertAlmostEqual(data["bms_terminal_temperature_min"], -1.0, places=3)
+        self.assertEqual(data["bms_terminal_temperature_max_channel"], 2)
+        self.assertEqual(data["bms_terminal_temperature_min_channel"], 5)
+        # daily counters need one confirming poll, like every counter
+        self.assertNotIn("bms_charge_energy_today", data)
+        data = await self.poll()
+        self.assertAlmostEqual(data["bms_charge_energy_today"], 2.35, places=3)
+        self.assertAlmostEqual(data["bms_discharge_energy_today"], 1.87, places=3)
         # the per-poll pile values are not overwritten by the system block
         self.assertEqual(data["bms_soc"], self.blocks[5123][4])
+
+    async def test_unfilled_terminal_and_insulation_registers_stay_unknown(self):
+        self.blocks[0x1100][72:78] = [0] * 6
+        data = await self.poll()
+        self.assertIn("bms_cell_voltage_delta", data)
+        for key in ("bms_terminal_temperature_max", "bms_terminal_temperature_min",
+                    "bms_terminal_temperature_max_channel",
+                    "bms_terminal_temperature_min_channel",
+                    "bms_insulation_resistance", "bms_insulation_error_level"):
+            self.assertNotIn(key, data)
+
+    def test_insulation_fault_with_error_level_is_shown(self):
+        regs = list(self.blocks[0x1100])
+        regs[72], regs[73] = 0, 2
+        values = coordinator_module.decode_bms_system(regs)
+        self.assertEqual(values["bms_insulation_resistance"], 0)
+        self.assertEqual(values["bms_insulation_error_level"], 2)
 
     async def test_bms_system_read_after_normal_bms_read(self):
         await self.poll()
@@ -533,6 +566,7 @@ class BatteryDetailsOffTests(OptionalReadTests):
     # Inherited tests that need the battery blocks do not apply here.
     test_bms_system_block_is_decoded = None
     test_bms_system_read_after_normal_bms_read = None
+    test_unfilled_terminal_and_insulation_registers_stay_unknown = None
     test_cell_temperatures_are_signed = None
     test_cell_voltages_are_decoded_with_count_from_0x1100 = None
     test_cancelled_optional_read_is_no_failure_and_no_pause = None

@@ -48,6 +48,13 @@ VALUE_RANGES = {
     "bms_module_temperature_max": (-40, 100),
     "bms_module_temperature_min": (-40, 100),
     "bms_remaining_energy": (0, 1000),
+    # Wide on purpose: a really hot terminal must still be shown.
+    "bms_terminal_temperature_max": (-40, 150),
+    "bms_terminal_temperature_min": (-40, 150),
+    "bms_insulation_resistance": (0, 0xFFFF),
+    "bms_insulation_error_level": (0, 0xFFFF),
+    "isolation_resistance": (0, 0xFFFF),
+    "grid_mode": (0, 2),
     "bms_module_count": (0, 100),
     "bms_cell_count": (0, 1000),
     "grid_total_power": (-GRID_POWER_LIMIT, GRID_POWER_LIMIT),
@@ -98,9 +105,21 @@ COUNTER_RATES = {
     "total_battery_discharge": INVERTER_POWER_LIMIT / 3_600_000,
     "third_party_meter_energy": PV_POWER_LIMIT / 3_600_000,
     "eps_output_energy": INVERTER_POWER_LIMIT / 3_600_000,
+    # Daily BMS counters: a drop to ~0 at the BMS midnight is a reset and is
+    # confirmed by the next sample, like any other counter reset.
+    "bms_charge_energy_today": INVERTER_POWER_LIMIT / 3_600_000,
+    "bms_discharge_energy_today": INVERTER_POWER_LIMIT / 3_600_000,
     "bms_cycles": 100 / 86400,
 }
 VALUE_RANGES.update({key: (0, 10_000_000) for key in COUNTER_RATES if key != "bms_cycles"})
+# A daily counter never comes near the lifetime limit above.
+VALUE_RANGES.update({key: (0, 200) for key in ("bms_charge_energy_today", "bms_discharge_energy_today")})
+
+# Counters that only a slow optional block refreshes: between reads the
+# cached value repeats in every poll. Their allowed growth is measured from
+# when the value last changed, not from the previous poll, or real growth
+# between two block reads would look like a spike.
+SLOW_COUNTERS = {"bms_charge_energy_today", "bms_discharge_energy_today"}
 
 
 class TelemetryValidator:
@@ -126,7 +145,8 @@ class TelemetryValidator:
         if previous is not None:
             last_value, last_time = previous
             if self._counter_step_valid(key, last_value, value, now - last_time):
-                self._counters[key] = (value, now)
+                if not (key in SLOW_COUNTERS and value == last_value):
+                    self._counters[key] = (value, now)
                 self._pending_counters.pop(key, None)
                 return True
             # Reject impossible increases and small dips even when repeated.

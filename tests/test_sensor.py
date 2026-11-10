@@ -163,3 +163,55 @@ class SensorTests(unittest.TestCase):
         coordinator.data = {}
         self.assertIsNone(sensor.native_value)
         self.assertEqual(sensor.extra_state_attributes, {})
+
+    def test_grid_mode_is_text_with_raw_code(self):
+        platform = load_sensor()
+        coordinator = SimpleNamespace(data={"grid_mode": 1})
+        entry = SimpleNamespace(data={"host": "test"}, entry_id="test", title="Test")
+        sensor = platform.PylontechGridModeSensor(coordinator, platform.GRID_MODE_SENSOR, entry)
+        self.assertEqual(sensor.native_value, "Grid-tied")
+        self.assertEqual(sensor.extra_state_attributes, {"code": 1})
+        coordinator.data = {"grid_mode": 2}
+        self.assertEqual(sensor.native_value, "Backup")
+        coordinator.data = {}
+        self.assertIsNone(sensor.native_value)
+
+    def test_group1_sensors_and_their_defaults(self):
+        import asyncio
+
+        platform = load_sensor()
+        entry = SimpleNamespace(data={"host": "test"}, entry_id="e1", title="Test")
+
+        def setup(bms_system):
+            coordinator = SimpleNamespace(
+                data={}, bms_system_enabled=bms_system,
+                bms_cell_voltages_enabled=False, bms_cell_temperatures_enabled=False,
+            )
+            hass = SimpleNamespace(data={platform.DOMAIN: {"e1": coordinator}})
+            added = []
+            asyncio.run(platform.async_setup_entry(hass, entry, added.extend))
+            # HA's default for entity_registry_enabled_default is True.
+            return {e.entity_description.key: getattr(
+                e.entity_description, "entity_registry_enabled_default", True)
+                for e in added} | {"_desc": {e.entity_description.key: e.entity_description for e in added}}
+
+        on = setup(True)
+        # always there (normal poll): grid mode visible, isolation diagnostic
+        self.assertIn("grid_mode", on)
+        self.assertFalse(on["isolation_resistance"])
+        # with extended battery statistics: visible ...
+        for key in ("bms_charge_energy_today", "bms_discharge_energy_today",
+                    "bms_terminal_temperature_max"):
+            self.assertTrue(on[key], key)
+        # ... and diagnostic, off by default
+        for key in ("bms_terminal_temperature_min", "bms_terminal_temperature_max_channel",
+                    "bms_terminal_temperature_min_channel", "bms_insulation_resistance",
+                    "bms_insulation_error_level"):
+            self.assertFalse(on[key], key)
+        self.assertEqual(on["_desc"]["bms_charge_energy_today"].state_class, "total_increasing")
+
+        off = setup(False)
+        self.assertIn("grid_mode", off)
+        self.assertIn("isolation_resistance", off)
+        self.assertNotIn("bms_charge_energy_today", off)
+        self.assertNotIn("bms_terminal_temperature_max", off)

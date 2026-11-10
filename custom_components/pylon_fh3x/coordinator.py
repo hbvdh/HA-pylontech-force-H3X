@@ -304,7 +304,7 @@ def decode_bms_system(regs):
     """
     cell_max = regs[16]   # mV
     cell_min = regs[17]
-    return {
+    values = {
         "bms_basic_status": regs[0],
         "bms_protection_status": regs[1],
         "bms_alarm_status_1": regs[2],
@@ -335,7 +335,30 @@ def decode_bms_system(regs):
         "bms_cell_count": regs[55],
         "bms_charge_forbidden": regs[56],
         "bms_discharge_forbidden": regs[57],
+        # Daily counters (Wh), reset by the BMS at its midnight. Documented
+        # for the pile block (0x1427-0x142A); same offsets here, as for
+        # remaining energy (0x21).
+        "bms_charge_energy_today": _u32(regs, 39) / 1000,
+        "bms_discharge_energy_today": _u32(regs, 41) / 1000,
+        # 0x1148-0x114D: not in the V1.2 protocol document; layout from the
+        # Pylontech Research register map. Checked against live values.
+        "bms_insulation_resistance": regs[72],       # kOhm
+        "bms_insulation_error_level": regs[73],
+        "bms_terminal_temperature_max": get_16bit_int(regs, 74) * 0.1,
+        "bms_terminal_temperature_min": get_16bit_int(regs, 75) * 0.1,
+        "bms_terminal_temperature_max_channel": regs[76],
+        "bms_terminal_temperature_min_channel": regs[77],
     }
+    # BMS firmware that does not fill these registers returns all zeros. A
+    # terminal at exactly 0.0 degC, or 0 kOhm insulation (a dead short to
+    # earth) with no error level, is not a measurement: leave them unknown.
+    if not any(regs[74:78]):
+        for key in ("max", "min", "max_channel", "min_channel"):
+            values.pop(f"bms_terminal_temperature_{key}")
+    if not regs[72] and not regs[73]:
+        values.pop("bms_insulation_resistance")
+        values.pop("bms_insulation_error_level")
+    return values
 
 
 def decode_bms_cell_voltages(regs):
@@ -1063,6 +1086,8 @@ class PylontechCoordinator(DataUpdateCoordinator):
                 data["third_party_meter_energy"] = get_32bit_float(r_inverter_main, 12)
                 data["fault_code"] = get_16bit_uint(r_inverter_main, 17)
                 data["warning_code"] = get_16bit_uint(r_inverter_main, 18)
+                # 30142 ISO: insulation resistance PV/DC to earth, kOhm (U16).
+                data["isolation_resistance"] = get_16bit_uint(r_inverter_main, 42)
 
             # Per-phase grid current/power (CT clamp measurements at the grid connection).
             if r_grid_phases:
@@ -1077,6 +1102,8 @@ class PylontechCoordinator(DataUpdateCoordinator):
                 data["total_grid_import"] = get_32bit_float(r_inverter_battery, 0)
                 data["total_grid_export"] = get_32bit_float(r_inverter_battery, 2)
 
+                # 30160 AC Output Substate: 0 null, 1 grid-tied, 2 backup.
+                data["grid_mode"] = get_16bit_uint(r_inverter_battery, 4)
                 raw_status = get_16bit_uint(r_inverter_battery, 5)
                 data["battery_status"] = BATTERY_STATUS_MAP.get(raw_status, f"Unknown ({raw_status})")
                 data["battery_power"] = get_32bit_int(r_inverter_battery, 6)

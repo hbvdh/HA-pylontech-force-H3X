@@ -124,3 +124,10 @@ FIRMWARE_UPDATE_STATE_MAP = {
     1: "Download finished",
     2: "Update finished",
 }
+
+# PCS 30160 AC Output Substate (Modbus protocol V1.2).
+GRID_MODE_MAP = {
+    0: "Null",
+    1: "Grid-tied",
+    2: "Backup",
+}

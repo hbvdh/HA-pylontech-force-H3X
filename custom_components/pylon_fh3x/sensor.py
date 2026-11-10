@@ -23,6 +23,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .alarms import (
     FIRMWARE_UPDATE_STATE_MAP,
+    GRID_MODE_MAP,
     PCS_FAULTS,
     PCS_WARNINGS,
     active_issues,
@@ -485,6 +486,40 @@ BMS_SYSTEM_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
     _bms_diag("bms_discharge_forbidden", "BMS Discharge Forbidden", icon="mdi:battery-off-outline"),
     _bms_diag("bms_force_charge_request", "BMS Force Charge Request", icon="mdi:battery-alert"),
     _bms_diag("bms_balance_charge_request", "BMS Balance Charge Request", icon="mdi:battery-sync"),
+    # Daily counters, reset by the BMS at its midnight.
+    SensorEntityDescription(
+        key="bms_charge_energy_today", name="BMS Charge Energy Today",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL_INCREASING, suggested_display_precision=2,
+    ),
+    SensorEntityDescription(
+        key="bms_discharge_energy_today", name="BMS Discharge Energy Today",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL_INCREASING, suggested_display_precision=2,
+    ),
+    # Temperature of the battery power terminals (hot terminal = bad contact).
+    SensorEntityDescription(
+        key="bms_terminal_temperature_max", name="BMS Terminal Temperature Max",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=1,
+    ),
+    _bms_diag(
+        "bms_terminal_temperature_min", "BMS Terminal Temperature Min",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=1,
+    ),
+    _bms_diag("bms_terminal_temperature_max_channel", "BMS Terminal Temperature Max Channel", icon="mdi:numeric"),
+    _bms_diag("bms_terminal_temperature_min_channel", "BMS Terminal Temperature Min Channel", icon="mdi:numeric"),
+    _bms_diag(
+        "bms_insulation_resistance", "BMS Insulation Resistance",
+        native_unit_of_measurement="kΩ", state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:omega",
+    ),
+    _bms_diag("bms_insulation_error_level", "BMS Insulation Error Level", icon="mdi:alert-outline"),
 )
 
 # --- Optional reads: third-party meter, codes, limits -------------------------
@@ -523,6 +558,19 @@ OPTIONAL_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
 FIRMWARE_UPDATE_STATE_SENSOR = SensorEntityDescription(
     key="firmware_update_state", name="Firmware Update State",
     entity_category=EntityCategory.DIAGNOSTIC, icon="mdi:update",
+)
+
+# 30160, in the battery block read every poll: on the grid or on backup.
+GRID_MODE_SENSOR = SensorEntityDescription(
+    key="grid_mode", name="Grid Mode", icon="mdi:transmission-tower",
+)
+
+# 30142, in the main block read every poll. PV/DC insulation to earth.
+ISOLATION_RESISTANCE_SENSOR = SensorEntityDescription(
+    key="isolation_resistance", name="Isolation Resistance",
+    native_unit_of_measurement="kΩ", state_class=SensorStateClass.MEASUREMENT,
+    entity_category=EntityCategory.DIAGNOSTIC,
+    entity_registry_enabled_default=False, icon="mdi:omega",
 )
 
 IDENTITY_SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
@@ -587,7 +635,7 @@ async def async_setup_entry(
     coordinator = hass.data[DOMAIN][entry.entry_id]
 
     # Create a PylontechSensor for each description above
-    descriptions = SENSOR_TYPES + OPTIONAL_SENSOR_TYPES
+    descriptions = SENSOR_TYPES + OPTIONAL_SENSOR_TYPES + (ISOLATION_RESISTANCE_SENSOR,)
     # AC-coupled PV only exists when the 30600 block is read; otherwise these
     # sensors would stay empty.
     if getattr(coordinator, "ac_coupled_pv_enabled", False):
@@ -603,6 +651,7 @@ async def async_setup_entry(
     entities.append(
         PylontechFirmwareStateSensor(coordinator, FIRMWARE_UPDATE_STATE_SENSOR, entry)
     )
+    entities.append(PylontechGridModeSensor(coordinator, GRID_MODE_SENSOR, entry))
     if getattr(coordinator, "bms_cell_voltages_enabled", False):
         entities.append(
             PylontechCellSensor(
@@ -660,6 +709,8 @@ class PylontechSensor(CoordinatorEntity, SensorEntity):
 class PylontechFirmwareStateSensor(PylontechSensor):
     """Firmware update state (30152) as text, raw value as attribute."""
 
+    _map = FIRMWARE_UPDATE_STATE_MAP
+
     @property
     def _raw(self):
         return (self.coordinator.data or {}).get(self.entity_description.key)
@@ -669,11 +720,17 @@ class PylontechFirmwareStateSensor(PylontechSensor):
         raw = self._raw
         if raw is None:
             return None
-        return FIRMWARE_UPDATE_STATE_MAP.get(raw, f"Unknown ({raw})")
+        return self._map.get(raw, f"Unknown ({raw})")
 
     @property
     def extra_state_attributes(self):
         return {"code": self._raw}
+
+
+class PylontechGridModeSensor(PylontechFirmwareStateSensor):
+    """Grid mode (30160) as text: Grid-tied or Backup; raw value as attribute."""
+
+    _map = GRID_MODE_MAP
 
 
 class PylontechIdentitySensor(PylontechSensor):

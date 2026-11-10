@@ -48,6 +48,9 @@ ratings or protection settings. Limits live in
 | SOC, SOH and SOC settings | 0 to 100 percent |
 | Lifetime energy counters | 0 to 10,000,000 kWh, plus growth checks |
 | BMS cycle counter | 0 to 65,534, plus growth checks |
+| BMS daily charge/discharge energy | 0 to 200 kWh, plus growth checks |
+| BMS terminal temperature | -40 to 150 degrees C (wide on purpose: a hot terminal must stay visible) |
+| Grid mode (30160) | 0 to 2 |
 
 The [included Modbus protocol](ModBus-Protocol-Pylon-FH3X-V1.2_20250811.md)
 defines register types, units, scaling, signs and percentage fields. The
@@ -88,6 +91,14 @@ and batched updates. The **grid import/export lifetime counters** use a separate
 precision steps, whichever is larger). This rejects the observed 206.06 to
 206.87 kWh jump in 100 seconds, which would require 29.16 kW average import.
 The cycle counter allows 100 cycles per day plus a one-cycle margin.
+The **BMS daily charge/discharge counters** come from the BMS summary block,
+read every 5 minutes; between reads the cached value repeats in every poll.
+Their growth is therefore measured from the time the value last changed, not
+from the previous poll, or real growth between two block reads (for example
+0.42 kWh in 5 minutes at 5 kW) would look like a spike. The BMS resets them at
+its own midnight; that drop counts as a reset like any other counter. Because
+the confirming sample is the cached copy of the same read, a single low
+reading of this block is not filtered out the way it is for the other counters.
 These are corruption checks, not estimates of expected consumption or cycle life.
 The 25 kW counter bound allows margin for a 3x25 A connection but may need
 adjustment for sites capable of higher grid power.
