@@ -15,11 +15,14 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 # Map raw register values to user-facing EMS modes.
-# 0-5 come from the Modbus protocol document. 6 is not in that document: the
-# Pylontech app's "Intelligent Dynamic" mode (app V1.1.50+, BMS V0.26+, a
-# cloud tariff algorithm) leaves an undocumented code in 40907. Value 6 is
-# assumed until confirmed on a live system; the raw_value attribute and the
-# warning below show the real code.
+# 0-5 come from the Modbus protocol document. Dynamic mode is not in that
+# document: the Pylontech app's "Intelligent Dynamic" mode (app V1.1.50+,
+# BMS V0.26+, a cloud tariff algorithm) leaves an undocumented code in 40907.
+# 262 (0x0106) was read on a live system (PCS V1.0.0.43, BMS V0.34) with the
+# app on Dynamic: low byte 6, high byte 0x01 (meaning unknown). The exact value
+# is matched, not just the low byte, so an unseen high-byte combination stays
+# unknown and is logged instead of being shown as a documented mode. 6 alone
+# is kept as the likely bare code.
 EMS_MODE_OPTIONS = {
     "0": "Self-Consumption",
     "1": "Back up mode",
@@ -28,6 +31,7 @@ EMS_MODE_OPTIONS = {
     "4": "User mode",
     "5": "PN-Customer mode",
     "6": "Dynamic mode",
+    "262": "Dynamic mode",
 }
 
 # Modes that can be shown but not written from Home Assistant. Dynamic mode is
@@ -54,7 +58,8 @@ SELECT_TYPES: tuple[PylontechSelectEntityDescription, ...] = (
         icon="mdi:state-machine",
         register_address=40907,
         slave_id=2,
-        options=list(EMS_MODE_OPTIONS.values()),
+        # Unique labels: several raw values can share one label.
+        options=list(dict.fromkeys(EMS_MODE_OPTIONS.values())),
     ),
 )
 

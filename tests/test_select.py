@@ -73,9 +73,19 @@ class EmsModeSelectTests(unittest.TestCase):
         self.assertEqual(entity.extra_state_attributes, {"raw_value": 4})
 
     def test_dynamic_mode_is_shown(self):
-        entity = make_select(self.platform, {"ems_mode": "6"})
-        self.assertEqual(entity.current_option, "Dynamic mode")
-        self.assertIn("Dynamic mode", self.platform.SELECT_TYPES[0].options)
+        for raw in ("262", "6"):  # 262 = 0x0106, read live with the app on Dynamic
+            with self.subTest(raw=raw):
+                entity = make_select(self.platform, {"ems_mode": raw})
+                self.assertEqual(entity.current_option, "Dynamic mode")
+                with self.assertNoLogs(self.platform._LOGGER, "WARNING"):
+                    entity._handle_coordinator_update()
+        options = self.platform.SELECT_TYPES[0].options
+        self.assertEqual(options.count("Dynamic mode"), 1)
+        self.assertEqual(len(options), len(set(options)))
+
+    def test_unseen_high_byte_combination_stays_unknown(self):
+        entity = make_select(self.platform, {"ems_mode": str(0x0100)})
+        self.assertIsNone(entity.current_option)
 
     def test_unmapped_value_is_unknown_with_raw_value_and_logged_once(self):
         entity = make_select(self.platform, {"ems_mode": "9", "charge_discharge_power": -1000})
