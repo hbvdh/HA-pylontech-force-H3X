@@ -319,6 +319,23 @@ class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
         # the per-poll pile values are not overwritten by the system block
         self.assertEqual(data["bms_soc"], self.blocks[5123][4])
 
+    async def test_unfilled_terminal_and_insulation_registers_stay_unknown(self):
+        self.blocks[0x1100][72:78] = [0] * 6
+        data = await self.poll()
+        self.assertIn("bms_cell_voltage_delta", data)
+        for key in ("bms_terminal_temperature_max", "bms_terminal_temperature_min",
+                    "bms_terminal_temperature_max_channel",
+                    "bms_terminal_temperature_min_channel",
+                    "bms_insulation_resistance", "bms_insulation_error_level"):
+            self.assertNotIn(key, data)
+
+    def test_insulation_fault_with_error_level_is_shown(self):
+        regs = list(self.blocks[0x1100])
+        regs[72], regs[73] = 0, 2
+        values = coordinator_module.decode_bms_system(regs)
+        self.assertEqual(values["bms_insulation_resistance"], 0)
+        self.assertEqual(values["bms_insulation_error_level"], 2)
+
     async def test_bms_system_read_after_normal_bms_read(self):
         await self.poll()
         self.assertLess(self.calls.index(5123), self.calls.index(0x1100))
@@ -549,6 +566,7 @@ class BatteryDetailsOffTests(OptionalReadTests):
     # Inherited tests that need the battery blocks do not apply here.
     test_bms_system_block_is_decoded = None
     test_bms_system_read_after_normal_bms_read = None
+    test_unfilled_terminal_and_insulation_registers_stay_unknown = None
     test_cell_temperatures_are_signed = None
     test_cell_voltages_are_decoded_with_count_from_0x1100 = None
     test_cancelled_optional_read_is_no_failure_and_no_pause = None

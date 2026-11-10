@@ -304,7 +304,7 @@ def decode_bms_system(regs):
     """
     cell_max = regs[16]   # mV
     cell_min = regs[17]
-    return {
+    values = {
         "bms_basic_status": regs[0],
         "bms_protection_status": regs[1],
         "bms_alarm_status_1": regs[2],
@@ -349,6 +349,16 @@ def decode_bms_system(regs):
         "bms_terminal_temperature_max_channel": regs[76],
         "bms_terminal_temperature_min_channel": regs[77],
     }
+    # BMS firmware that does not fill these registers returns all zeros. A
+    # terminal at exactly 0.0 degC, or 0 kOhm insulation (a dead short to
+    # earth) with no error level, is not a measurement: leave them unknown.
+    if not any(regs[74:78]):
+        for key in ("max", "min", "max_channel", "min_channel"):
+            values.pop(f"bms_terminal_temperature_{key}")
+    if not regs[72] and not regs[73]:
+        values.pop("bms_insulation_resistance")
+        values.pop("bms_insulation_error_level")
+    return values
 
 
 def decode_bms_cell_voltages(regs):
