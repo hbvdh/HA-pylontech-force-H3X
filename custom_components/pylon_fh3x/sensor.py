@@ -30,7 +30,7 @@ from .alarms import (
     issues_state,
 )
 from .device import device_info
-from .const import DOMAIN, MANUFACTURER, MODEL
+from .const import DOMAIN
 
 # All sensors are defined here. Each 'key' must match exactly the key
 # coordinator.py uses in the data dictionary.

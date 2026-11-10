@@ -8,7 +8,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .device import device_info
-from .const import DOMAIN, MANUFACTURER, MODEL
+from .const import DOMAIN
 
 @dataclass
 class PylontechSwitchEntityDescription(SwitchEntityDescription):

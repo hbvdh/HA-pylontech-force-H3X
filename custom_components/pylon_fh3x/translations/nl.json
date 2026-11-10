@@ -26,5 +26,18 @@
       "already_configured": "Dit apparaat is al geconfigureerd.",
       "reconfigure_successful": "Verbindingsgegevens bijgewerkt."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opties",
+        "data": {
+          "battery_details": "Uitgebreide batterijstatistieken"
+        },
+        "data_description": {
+          "battery_details": "Leest de BMS-samenvatting, alle celspanningen en alle celtemperaturen (elke 5 en 15 minuten). Uit: deze sensoren worden niet aangemaakt; bestaande worden 'unavailable'."
+        }
+      }
+    }
   }
 }

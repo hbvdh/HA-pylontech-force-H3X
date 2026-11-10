@@ -148,6 +148,12 @@ def block_interval(block) -> int:
     return max(0, int(globals()[setting])) if setting else 0
 
 
+# Blocks switched together by the "extended battery statistics" option.
+BATTERY_DETAIL_ADDRESSES = frozenset(
+    (BMS_SYSTEM_BLOCK[0], BMS_CELL_VOLTAGES_ADDRESS, BMS_CELL_TEMPERATURES_ADDRESS)
+)
+
+
 _GRID_PHASE_KEYS = (
     "grid_current_r", "grid_current_s", "grid_current_t",
     "grid_power_r", "grid_power_s", "grid_power_t",
@@ -396,7 +402,13 @@ async def _modbus_read(client, address, count, target_id):
 class PylontechCoordinator(DataUpdateCoordinator):
     """Coordinate Modbus reads and writes for the inverter."""
 
-    def __init__(self, hass: HomeAssistant, host: str, port: int) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        host: str,
+        port: int,
+        battery_details: bool = False,
+    ) -> None:
         self.client = AsyncModbusTcpClient(
             host=host,
             port=port,
@@ -404,6 +416,9 @@ class PylontechCoordinator(DataUpdateCoordinator):
             retries=0,
         )
         self.host = host
+        # Extended battery statistics (0x1100, 0x1500, 0x1800), set via
+        # Configure in the UI. Off: these blocks are never read.
+        self.battery_details = battery_details
         self._validator = TelemetryValidator()
         self._transition_guard = TelemetryTransitionGuard()
         self._modbus_lock = asyncio.Lock()
@@ -449,22 +464,28 @@ class PylontechCoordinator(DataUpdateCoordinator):
         await asyncio.sleep(delay)
         self._last_modbus_slave = slave
 
+    def _interval(self, block) -> int:
+        """Read interval for a block, 0 when off (also via the battery option)."""
+        if block[0] in BATTERY_DETAIL_ADDRESSES and not self.battery_details:
+            return 0
+        return block_interval(block)
+
     @property
     def bms_system_enabled(self) -> bool:
         """True when the BMS system block (0x1100) is read at all."""
-        return block_interval(BMS_SYSTEM_BLOCK) > 0
+        return self._interval(BMS_SYSTEM_BLOCK) > 0
 
     @property
     def bms_cell_voltages_enabled(self) -> bool:
         """True when the cell voltages (0x1500) are read at all."""
-        return self.bms_system_enabled and block_interval(
+        return self.bms_system_enabled and self._interval(
             (BMS_CELL_VOLTAGES_ADDRESS, 0, 1)
         ) > 0
 
     @property
     def bms_cell_temperatures_enabled(self) -> bool:
         """True when the cell temperatures (0x1800) are read at all."""
-        return self.bms_system_enabled and block_interval(
+        return self.bms_system_enabled and self._interval(
             (BMS_CELL_TEMPERATURES_ADDRESS, 0, 1)
         ) > 0
 
@@ -487,17 +508,17 @@ class PylontechCoordinator(DataUpdateCoordinator):
     @property
     def eps_current_enabled(self) -> bool:
         """True when the 30600 block (EPS current) is read at all."""
-        return block_interval(MONITOR_EXT_BLOCK) > 0
+        return self._interval(MONITOR_EXT_BLOCK) > 0
 
     @property
     def ac_coupled_pv_enabled(self) -> bool:
         """True when the 30600 block (AC-coupled PV) is read at all."""
-        return block_interval(MONITOR_EXT_BLOCK) > 0
+        return self._interval(MONITOR_EXT_BLOCK) > 0
 
     def _optional_due(self, block) -> bool:
         """True when a block is on, not switched off, and its interval passed."""
         address = block[0]
-        if block_interval(block) <= 0 or address in self._optional_disabled:
+        if self._interval(block) <= 0 or address in self._optional_disabled:
             return False
         next_read = self._optional_next_read.get(address)
         return next_read is None or time.monotonic() >= next_read
@@ -524,7 +545,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
         started = time.monotonic()
         # Next attempt one interval from now, also after a failure, so a
         # refusing block is not hammered every poll.
-        self._optional_next_read[address] = started + block_interval(block)
+        self._optional_next_read[address] = started + self._interval(block)
         async with self._modbus_lock:
             try:
                 if not self.client.connected:
@@ -574,7 +595,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
         if no_answer:
             self._optional_failures[address] = 0
             self._optional_next_read[address] = started + max(
-                OPTIONAL_PAUSE_S, block_interval(block)
+                OPTIONAL_PAUSE_S, self._interval(block)
             )
             outcome = f"; block paused for {OPTIONAL_PAUSE_S // 60} min"
         elif failures >= OPTIONAL_MAX_FAILURES:
