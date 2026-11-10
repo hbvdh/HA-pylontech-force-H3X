@@ -1,0 +1,204 @@
+# Pylontech Force H3X - battery and cell overview (custom:button-card)
+# Works without editing: finds the H3X sensors by the end of their entity ID,
+# whatever prefix they have (e.g. sensor.pylontech_force_h3x_..., or
+# sensor.kelder_pylontech_force_h3x_...). Needs "Extended battery statistics"
+# switched on under Configure on the integration card for the cell data.
+type: custom:button-card
+variables:
+  max_width: 0          # max card width in px, 0 = full width
+show_name: false
+show_icon: false
+show_state: false
+tap_action:
+  action: none
+# Entity IDs differ per system, so the card re-renders on any state change.
+triggers_update: all
+grid_options:
+  columns: full
+  rows: auto
+styles:
+  card:
+    - padding: 12px
+    - cursor: default
+    - max-width: >-
+        [[[ const w = Number(variables.max_width); return w > 0 ? w + 'px' : 'none'; ]]]
+    - box-sizing: border-box
+  grid:
+    - grid-template-areas: '"bms"'
+    - grid-template-columns: 1fr
+    - width: 100%
+  custom_fields:
+    bms:
+      - width: 100%
+      - justify-self: stretch
+      - text-align: left
+      - white-space: normal
+custom_fields:
+  bms: |
+    [[[
+      // ---- settings ----
+      const GREEN = '#4caf50';   // water colour
+      const STEP_MV = 2;         // mV per tone step
+      const RED_MV = 15;         // whole cell red from this deviation (mV)
+      const GROUP = 8;           // cells per temperature sensor
+      const CELLS_PER_MODULE = 32; // fallback when the module count is missing
+      // ------------------
+
+      // Find H3X entities by the end of their ID, whatever the prefix.
+      const all = Object.keys(states);
+      const h3x = all.filter((id) => id.includes('pylontech') || id.includes('h3x'));
+      const find = (suffix, domain) => {
+        const d = (domain || 'sensor') + '.';
+        const hit = (list) => list.find((id) => id.startsWith(d) && (id.endsWith('_' + suffix) || id === d + suffix));
+        return hit(h3x) || hit(all);
+      };
+      const E = (suffix, domain) => { const id = find(suffix, domain); return id ? states[id] : undefined; };
+      const S = (suffix, domain) => { const e = E(suffix, domain); return e ? e.state : undefined; };
+      const U = (suffix) => { const e = E(suffix); return e && e.attributes.unit_of_measurement ? e.attributes.unit_of_measurement : ''; };
+
+      const fmt = (x, d) => Number(x).toFixed(d).replace('.', ',');
+      const num = (suffix, d) => { const v = parseFloat(S(suffix)); return isNaN(v) ? '–' : fmt(v, d); };
+      const abs = (suffix, d) => { const v = parseFloat(S(suffix)); return isNaN(v) ? '–' : fmt(Math.abs(v), d); };
+      // Power in kW and energy in kWh, whatever unit the sensor uses.
+      const kilo = (suffix, d) => {
+        const v = parseFloat(S(suffix));
+        if (isNaN(v)) return '–';
+        const u = U(suffix);
+        const k = (u === 'W' || u === 'Wh') ? v / 1000 : v;
+        return fmt(Math.abs(k), d);
+      };
+      const tUnit = (suffix) => U(suffix) || '°C';
+
+      const vs = E('bms_cell_voltage_average');
+      const ts = E('bms_cell_temperature_average');
+      const V = vs && Array.isArray(vs.attributes.cells) ? vs.attributes.cells : [];
+      const T = ts && Array.isArray(ts.attributes.cells) ? ts.attributes.cells : [];
+
+      // Module count from the BMS; otherwise derive it from the cell count.
+      const modRaw = parseInt(S('bms_module_count'));
+      let MODS;
+      if (modRaw > 0 && (!V.length || V.length % modRaw === 0)) MODS = modRaw;
+      else if (V.length && V.length % CELLS_PER_MODULE === 0) MODS = V.length / CELLS_PER_MODULE;
+      else MODS = V.length ? 1 : 3;
+
+      const COL_GAP = 10, CELL_GAP = 4;
+      const cols = 'grid-template-columns:repeat(' + MODS + ',minmax(0,1fr));column-gap:' + COL_GAP + 'px;';
+      const box = 'background:var(--secondary-background-color);border-radius:8px;padding:8px 10px;box-sizing:border-box;min-width:0;';
+
+      // ---------- top: BMS info and charge/discharge ----------
+      const alarm = S('bms_alarm', 'binary_sensor');
+      const alarmTxt = alarm === 'off' ? 'OK' : (alarm === 'on' ? 'ALARM' : '–');
+      const alarmCol = alarm === 'off' ? 'var(--success-color, #43a047)'
+        : (alarm === 'on' ? 'var(--error-color, #db4437)' : 'var(--secondary-text-color)');
+      const items = [
+        ['SOC', num('bms_soc', 0) + '%'],
+        ['Resterend', kilo('bms_remaining_energy', 2) + ' kWh'],
+        ['Spanning', num('bms_voltage', 1) + ' V'],
+        ['Stroom', abs('battery_current', 1) + ' A'],
+        ['SOH', num('bms_soh', 0) + '%'],
+        ['Cycli', num('bms_cycles', 0)],
+        ['BMS-temp', num('bms_temperature', 1) + ' ' + tUnit('bms_temperature')],
+        ['Celtemp', num('bms_cell_temperature_min', 1) + '–' + num('bms_cell_temperature_max', 1) + ' ' + tUnit('bms_cell_temperature_min')],
+        ['Cel-delta', num('bms_cell_voltage_delta', 0) + ' mV'],
+        ['Max laden', abs('bms_max_charge_current', 0) + ' A'],
+        ['Max ontladen', abs('bms_max_discharge_current', 0) + ' A'],
+        ['BMS-alarm', '<span style="color:' + alarmCol + '">' + alarmTxt + '</span>'],
+      ];
+      const status = S('battery_status') || '';
+      let icon = 'mdi:minus', col = 'var(--secondary-text-color)', txt = status || '–';
+      if (status === 'Charging') { icon = 'mdi:arrow-up-bold'; col = 'var(--success-color, #43a047)'; txt = 'Laden'; }
+      else if (status === 'Discharging') { icon = 'mdi:arrow-down-bold'; col = 'var(--warning-color, #ffa600)'; txt = 'Ontladen'; }
+      else if (status === 'Idle' || status === 'Standby' || status === 'Sleep') { txt = 'Rust'; }
+
+      // Top row always 2/3 info and 1/3 charge/discharge, whatever the module count.
+      const topCols = 'grid-template-columns:minmax(0,2fr) minmax(0,1fr);column-gap:' + COL_GAP + 'px;';
+      let h = '<div>';
+      h += '<div style="display:grid;' + topCols + 'row-gap:10px;margin-bottom:10px;">';
+      h += '<div style="' + box + 'display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px 10px;">';
+      for (const [label, value] of items) {
+        h += '<div style="font-size:11px;color:var(--secondary-text-color);line-height:1.35;min-width:0;">' + label
+          + '<div style="font-size:13px;font-weight:500;color:var(--primary-text-color);overflow-wrap:anywhere;">' + value + '</div></div>';
+      }
+      h += '</div>';
+      h += '<div style="' + box + 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;text-align:center;">'
+        + '<ha-icon icon="' + icon + '" style="--mdc-icon-size:34px;color:' + col + ';"></ha-icon>'
+        + '<div style="font-size:14px;font-weight:500;">' + txt + '</div>'
+        + '<div style="font-size:12px;color:var(--secondary-text-color);">' + kilo('battery_power', 2) + ' kW</div></div>';
+      h += '</div>';
+
+      // ---------- modules and cells ----------
+      if (!V.length) {
+        const why = vs ? 'Wachten op de eerste celmeting…'
+          : 'Geen celdata: zet "Extended battery statistics" aan onder Configure van de integratie.';
+        return h + '<div style="color:var(--secondary-text-color);font-size:13px;">' + why + '</div></div>';
+      }
+      const socRaw = parseFloat(S('bms_soc'));
+      const SOC = isNaN(socRaw) ? 0 : Math.max(0, Math.min(100, socRaw));
+      const PER = V.length / MODS;
+      const avg = V.reduce((a, b) => a + b, 0) / V.length;
+      const t = new Date(vs.last_updated);
+      const hhmm = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
+      const cellT = tUnit('bms_cell_temperature_average');
+      const tones = [
+        'color-mix(in srgb, ' + GREEN + ' 40%, var(--card-background-color))',
+        'color-mix(in srgb, ' + GREEN + ' 70%, var(--card-background-color))',
+        GREEN,
+        'color-mix(in srgb, ' + GREEN + ' 70%, black)',
+        'color-mix(in srgb, ' + GREEN + ' 45%, black)',
+      ];
+      const tone = (d) => tones[Math.max(-2, Math.min(2, Math.trunc(d / STEP_MV))) + 2];
+      const red = 'var(--error-color, #db4437)';
+      const line = 'color-mix(in srgb, var(--primary-text-color) 35%, transparent)';
+      const pill = 'background:color-mix(in srgb, var(--card-background-color) 70%, transparent);border-radius:4px;padding:0 3px;';
+
+      // Headers first, then the cell columns, in one grid: all headers share
+      // one row, so the cells stay aligned when a header wraps on a phone.
+      h += '<div style="display:grid;' + cols + 'row-gap:8px;">';
+      for (let m = 0; m < MODS; m++) {
+        const cv = V.slice(m * PER, (m + 1) * PER);
+        const ct = T.slice(m * PER, (m + 1) * PER);
+        const sum = cv.reduce((a, b) => a + b, 0);
+        const spread = Math.round((Math.max(...cv) - Math.min(...cv)) * 1000);
+        const tRange = ct.length ? fmt(Math.min(...ct), 1) + '–' + fmt(Math.max(...ct), 1) + ' ' + cellT : '–';
+        h += '<div style="' + box + 'font-size:12px;line-height:1.45;color:var(--secondary-text-color);overflow-wrap:anywhere;">'
+          + '<div style="font-weight:500;color:var(--primary-text-color);">Module ' + (m + 1) + '</div>'
+          + '<div style="font-weight:500;color:var(--primary-text-color);">' + fmt(sum, 2) + ' V</div>'
+          + '<div>' + tRange + '</div>'
+          + '<div>Spreiding ' + spread + ' mV</div>'
+          + '<div style="font-size:11px;">Cellen ' + hhmm + '</div></div>';
+      }
+      for (let m = 0; m < MODS; m++) {
+        h += '<div style="min-width:0;">';
+        for (let g = 0; g < PER; g += GROUP) {
+          const last = g + GROUP >= PER;
+          h += '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:' + CELL_GAP + 'px;'
+            + (last ? '' : 'padding-bottom:8px;margin-bottom:8px;border-bottom:2px solid ' + line + ';') + '">';
+          for (let i = g; i < Math.min(g + GROUP, PER); i++) {
+            const k = m * PER + i;
+            const v = V[k];
+            const d = Math.round((v - avg) * 1000);
+            const isRed = Math.abs(d) >= RED_MV;
+            const vessel = 'position:relative;height:58px;min-width:0;border-radius:4px 4px 8px 8px;overflow:hidden;box-sizing:border-box;'
+              + (isRed
+                ? 'border:2px solid ' + red + ';background:color-mix(in srgb, ' + red + ' 30%, var(--card-background-color));'
+                : 'border:1px solid var(--divider-color);background:var(--card-background-color);');
+            h += '<div style="' + vessel + '">';
+            if (!isRed) {
+              h += '<div style="position:absolute;left:0;right:0;bottom:0;height:' + SOC + '%;background:' + tone(d) + ';"></div>';
+            }
+            const third = isRed
+              ? (d > 0 ? '+' : '') + d + ' mV'
+              : (T[k] !== undefined ? fmt(T[k], 1) + '°' : '');
+            h += '<div style="position:relative;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.25;">'
+              + '<span style="' + pill + 'font-size:11px;color:var(--secondary-text-color);">' + (k + 1) + '</span>'
+              + '<span style="' + pill + 'font-size:12px;font-weight:500;color:' + (isRed ? red : 'var(--primary-text-color)') + ';">' + fmt(v, 3) + '</span>'
+              + '<span style="' + pill + 'font-size:11px;color:' + (isRed ? red : 'var(--secondary-text-color)') + ';">' + third + '</span>'
+              + '</div></div>';
+          }
+          h += '</div>';
+        }
+        h += '</div>';
+      }
+      h += '</div></div>';
+      return h;
+    ]]]
