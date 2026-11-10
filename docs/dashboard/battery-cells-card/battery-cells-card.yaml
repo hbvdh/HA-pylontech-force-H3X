@@ -39,7 +39,12 @@ custom_fields:
       // ---- settings ----
       const GREEN = '#4caf50';   // water colour
       const STEP_MV = 2;         // mV per tone step
-      const RED_MV = 15;         // whole cell red from this deviation (mV)
+      // Whole cell red from this deviation (mV) from the average. In the flat
+      // part of the LFP curve cells stay within ~5 mV; near full they spread
+      // 15-25 mV during normal top balancing, so a higher limit applies there.
+      const RED_MV = 10;         // below RED_SOC
+      const RED_MV_TOP = 30;     // from RED_SOC (%) upwards
+      const RED_SOC = 90;
       const GROUP = 8;           // cells per temperature sensor
       const CELLS_PER_MODULE = 32; // fallback when the module count is missing
       // ------------------
@@ -134,6 +139,7 @@ custom_fields:
       }
       const socRaw = parseFloat(S('bms_soc'));
       const SOC = isNaN(socRaw) ? 0 : Math.max(0, Math.min(100, socRaw));
+      const redLimit = SOC >= RED_SOC ? RED_MV_TOP : RED_MV;
       const PER = V.length / MODS;
       const avg = V.reduce((a, b) => a + b, 0) / V.length;
       const t = new Date(vs.last_updated);
@@ -177,7 +183,7 @@ custom_fields:
             const k = m * PER + i;
             const v = V[k];
             const d = Math.round((v - avg) * 1000);
-            const isRed = Math.abs(d) >= RED_MV;
+            const isRed = Math.abs(d) >= redLimit;
             const vessel = 'position:relative;height:58px;min-width:0;border-radius:4px 4px 8px 8px;overflow:hidden;box-sizing:border-box;'
               + (isRed
                 ? 'border:2px solid ' + red + ';background:color-mix(in srgb, ' + red + ' 30%, var(--card-background-color));'
