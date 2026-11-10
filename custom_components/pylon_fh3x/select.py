@@ -21,8 +21,7 @@ _LOGGER = logging.getLogger(__name__)
 # 262 (0x0106) was read on a live system (PCS V1.0.0.43, BMS V0.34) with the
 # app on Dynamic: low byte 6, high byte 0x01 (meaning unknown). The exact value
 # is matched, not just the low byte, so an unseen high-byte combination stays
-# unknown and is logged instead of being shown as a documented mode. 6 alone
-# is kept as the likely bare code.
+# unknown and is logged instead of being shown as a documented mode.
 EMS_MODE_OPTIONS = {
     "0": "Self-Consumption",
     "1": "Back up mode",
@@ -30,7 +29,6 @@ EMS_MODE_OPTIONS = {
     "3": "Feed in priority mode",
     "4": "User mode",
     "5": "PN-Customer mode",
-    "6": "Dynamic mode",
     "262": "Dynamic mode",
 }
 
