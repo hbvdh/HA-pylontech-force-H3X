@@ -27,7 +27,7 @@ Say goodbye to complex, manual Modbus YAML configurations! This integration conn
 This integration pulls comprehensive data from both the Inverter and the internal Battery Management System (BMS), and allows you to control the system.
 
 **🎛️ Controls & Settings:**
-* **EMS Mode Selector:** Switch between modes like `Self-Consumption`, `Back up mode`, and `User mode`.
+* **EMS Mode Selector:** Switch between modes like `Self-Consumption`, `Back up mode`, and `User mode`. `Dynamic mode` (the Pylontech app's Intelligent Dynamic tariff mode, not in the Modbus document) (raw value 262 = 0x0106) is shown but can only be switched on in the app. The raw register value is available as the `raw_value` attribute; an unknown value is logged once as a warning.
 * **Charge/Discharge Power Ref:** Set the exact percentage (-100% to 100%) for battery charging or discharging.
 * **SOC Limits:** Sliders for setting the `Charge Limit SOC` and `Discharge Limit SOC (EPS)`.
 * **Period Schedules:** Turn your pre-programmed Charging Schedules ON/OFF
