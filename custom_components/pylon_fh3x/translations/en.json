@@ -8,6 +8,14 @@
           "host": "Host (IP Address)",
           "port": "Port"
         }
+      },
+      "reconfigure": {
+        "title": "Change connection",
+        "description": "Change the Modbus TCP connection details of your inverter. Entities and history are kept.",
+        "data": {
+          "host": "Host (IP Address)",
+          "port": "Port"
+        }
       }
     },
     "error": {
@@ -15,7 +23,8 @@
       "unknown": "Unexpected error occurred."
     },
     "abort": {
-      "already_configured": "Device is already configured."
+      "already_configured": "Device is already configured.",
+      "reconfigure_successful": "Connection details updated."
     }
   }
 }

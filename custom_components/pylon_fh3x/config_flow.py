@@ -56,6 +56,41 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user", data_schema=DATA_SCHEMA, errors=errors
         )
 
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Change host/port of an existing entry, keeping all entities."""
+        entry = self._get_reconfigure_entry()
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            try:
+                await validate_input(self.hass, user_input)
+            except CannotConnect:
+                errors["base"] = "cannot_connect"
+            except Exception:  # pylint: disable=broad-except
+                _LOGGER.exception("Unexpected exception")
+                errors["base"] = "unknown"
+            else:
+                # Store the new endpoint and reload the integration.
+                return self.async_update_reload_and_abort(
+                    entry, data_updates=user_input
+                )
+
+        # Pre-fill the form with the current values.
+        current = {**entry.data, **(user_input or {})}
+        schema = vol.Schema(
+            {
+                vol.Required("host", default=current.get("host", "")): str,
+                vol.Required(
+                    "port", default=current.get("port", DEFAULT_PORT)
+                ): int,
+            }
+        )
+        return self.async_show_form(
+            step_id="reconfigure", data_schema=schema, errors=errors
+        )
+
 
 class CannotConnect(HomeAssistantError):
     """Error to indicate we cannot connect."""
