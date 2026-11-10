@@ -88,7 +88,9 @@ custom_fields:
 
       const COL_GAP = 10, CELL_GAP = 4;
       const cols = 'grid-template-columns:repeat(' + MODS + ',minmax(0,1fr));column-gap:' + COL_GAP + 'px;';
-      const box = 'background:var(--secondary-background-color);border-radius:8px;padding:8px 10px;box-sizing:border-box;min-width:0;';
+      // Border derived from the text colour, so the boxes stay visible in themes
+      // where --secondary-background-color equals the card colour (e.g. Predbat).
+      const box = 'background:var(--secondary-background-color);border:1px solid color-mix(in srgb, var(--primary-text-color) 22%, transparent);border-radius:8px;padding:8px 10px;box-sizing:border-box;min-width:0;';
 
       // ---------- top: BMS info and charge/discharge ----------
       const alarm = S('bms_alarm', 'binary_sensor');
