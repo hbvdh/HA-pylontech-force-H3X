@@ -36,12 +36,15 @@
 
       // Stroomlijn: w > 0 = stroom in tekenrichting van het pad, w < 0 = tegengesteld.
       // De animatiefase volgt de klok, zodat een her-render elke seconde niet hapert.
-      const line = (id, d, w, color, idle = CFG.idle) => {
+      // bus = true: a rail segment; when idle it draws nothing, so the solid rail shows.
+      const line = (id, d, w, color, idle = CFG.idle, bus = false) => {
         if (Number.isNaN(w) || Math.abs(w) < idle) {
+          if (bus) return '';
           return `<path d="${d}" fill="none" style="stroke:var(--divider-color);stroke-width:2;stroke-dasharray:2 5"/>`;
         }
         const back  = w < 0;
-        const speed = Math.min(160, 20 + Math.abs(w) * 0.03);   // px per seconde
+        // Snelheid in px/s: ~13 bij 25 W, ~32 bij 1 kW, max 100 (vanaf ~4,4 kW).
+        const speed = Math.min(100, 12 + Math.abs(w) * 0.02);
         const dur   = 12 / speed;
         const delay = -(now % dur);
         defs += `<marker id="pf-${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:${color}"/></marker>`;
@@ -71,8 +74,17 @@
 
       const netTxt = Number.isNaN(net) ? 'geen data'
         : net > CFG.netIdle ? 'Afname' : net < -CFG.netIdle ? 'Teruglevering' : 'In balans';
-      const acTxt  = Number.isNaN(ac) ? '—'
-        : ac > CFG.idle ? 'Levert' : ac < -CFG.idle ? 'Neemt op' : 'Stand-by';
+      // H3X status follows the battery first: the H3X itself draws ~30-50 W from
+      // AC in stand-by, which must not read as charging.
+      // EMS mode unknown/unavailable (automation did not set it) is shown as Unknown.
+      const acIdle = 50;
+      const emsUnknown = !states[CFG.ems] || ['unknown', 'unavailable'].includes(ems);
+      const acTxt  = emsUnknown ? 'Unknown'
+        : Number.isNaN(ac) ? '\u2014'
+        : batP > CFG.idle ? 'Ontladen'
+        : ac > acIdle ? 'Levert PV'
+        : batP < -CFG.idle ? 'Opladen'
+        : 'Stand-by';
       const batTxt = Number.isNaN(batP) ? '—'
         : batP > CFG.idle ? 'Ontladen' : batP < -CFG.idle ? 'Laden' : 'Stand-by';
 
@@ -86,9 +98,22 @@
         + line('bat',  'M260 160 V130',           batP, C.bat[0])
         + line('net',  'M150 185 H168 V295 H365', net,  C.net[0], CFG.netIdle)
         + (hasSchuur ? line('schuur', 'M150 350 H365', sch, C.pv[0]) : '')
-        + line('ac',   'M335 65 H365',            ac,   'var(--secondary-text-color)')
+        + line('ac',   'M335 65 H365',            ac,   'var(--secondary-text-color)', acIdle)
         + line('huis', 'M365 200 H395',           huis, C.huis[0]);
+      // AC rail as a bus: each segment shows its own flow (Kirchhoff), so you can
+      // follow H3X -> house or grid -> house along the rail without guessing.
+      //   top    (H3X junction  -> house junction): H3X AC power, down = from H3X
+      //   middle (grid junction -> house junction): grid + shed PV, up = towards house
+      //   bottom (shed junction -> grid junction):  shed PV, up
+      const schW  = hasSchuur && !Number.isNaN(sch) ? sch : 0;
+      const midW  = Number.isNaN(net) ? NaN : net + schW;
+      const midC  = midW < 0 ? 'var(--secondary-text-color)'
+                  : (net > CFG.netIdle || schW <= CFG.idle) ? C.net[0] : C.pv[0];
+      const midIdle = schW > CFG.idle ? CFG.idle : CFG.netIdle;
       const rail = `<path d="M365 65 V${railEnd}" fill="none" style="stroke:var(--secondary-text-color);stroke-width:2"/>`
+        + line('r1', 'M365 65 V200',  ac,   'var(--secondary-text-color)', acIdle, true)
+        + line('r2', 'M365 295 V200', midW, midC, midIdle, true)
+        + (hasSchuur ? line('r3', 'M365 350 V295', sch, C.pv[0], CFG.idle, true) : '')
         + t(370, railEnd - 5, 'AC', 'ps');
 
       // ---- Batterij-vulling naar SoC ----
