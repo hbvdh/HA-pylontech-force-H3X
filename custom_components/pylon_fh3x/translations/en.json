@@ -39,5 +39,18 @@
         }
       }
     }
+  },
+  "issues": {
+    "identity_mismatch": {
+      "title": "Another H3X answers at {host}",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Has your H3X been replaced?",
+            "description": "The H3X that answers now has serial number {found}, which is not the one this integration was set up with. Nothing is read or written until this is cleared up.\n\nIf your H3X was replaced, select Submit: the integration continues with the new H3X and all entities, history and automations are kept. Lifetime counters of the new unit start at their own values.\n\nIf it was not replaced, close this window: another device has taken over the address. Use Reconfigure on the integration to enter the address of your own H3X."
+          }
+        }
+      }
+    }
   }
 }

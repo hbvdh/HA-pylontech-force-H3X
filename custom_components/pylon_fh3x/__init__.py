@@ -10,6 +10,7 @@ from .const import (
     CONF_HOST,
     CONF_PORT,
     CONF_BATTERY_DETAILS,
+    CONF_SERIAL,
     DEFAULT_BATTERY_DETAILS,
 )
 from .coordinator import PylontechCoordinator
@@ -36,6 +37,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = PylontechCoordinator(hass, host, port, battery_details)
     # Lets the coordinator update the device registry (firmware, model).
     coordinator.config_entry_ref = entry
+    # Serial number learned earlier; checked against the device that answers.
+    coordinator.identity_guard.expected = entry.data.get(CONF_SERIAL)
 
     
     await coordinator.async_config_entry_first_refresh()
@@ -67,4 +70,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reload the integration after the options were changed."""
+    coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if coordinator is not None and coordinator.battery_details == entry.options.get(
+        CONF_BATTERY_DETAILS, DEFAULT_BATTERY_DETAILS
+    ):
+        # Not an options change (e.g. the serial number was stored, or
+        # Reconfigure, which reloads by itself): nothing to do here.
+        return
     await hass.config_entries.async_reload(entry.entry_id)

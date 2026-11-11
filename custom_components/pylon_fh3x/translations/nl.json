@@ -39,5 +39,18 @@
         }
       }
     }
+  },
+  "issues": {
+    "identity_mismatch": {
+      "title": "Er antwoordt een andere H3X op {host}",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Is je H3X vervangen?",
+            "description": "De H3X die nu antwoordt heeft serienummer {found}; dat is niet het apparaat waarmee deze integratie is ingesteld. Er wordt niets gelezen of geschreven tot dit is opgehelderd.\n\nIs je H3X vervangen, kies dan Verzenden: de integratie gaat verder met de nieuwe H3X en alle entiteiten, geschiedenis en automatiseringen blijven behouden. De totaaltellers van het nieuwe apparaat beginnen op hun eigen stand.\n\nIs hij niet vervangen, sluit dan dit venster: een ander apparaat heeft het adres overgenomen. Gebruik Reconfigure op de integratie om het adres van je eigen H3X in te voeren."
+          }
+        }
+      }
+    }
   }
 }
