@@ -159,7 +159,12 @@ class PylontechSelect(CoordinatorEntity, SelectEntity):
             slave=self.entity_description.slave_id
         )
 
-        if success:
-            # Update local state immediately instead of waiting for the next poll.
-            self.coordinator.data[self.entity_description.key] = str(int_value)
-            self.async_write_ha_state()
+        if not success:
+            raise HomeAssistantError(
+                f"The H3X did not confirm EMS mode '{option}' (register "
+                f"{self.entity_description.register_address}). The mode may "
+                "not have been changed; see the Home Assistant log."
+            )
+        # Update local state immediately instead of waiting for the next poll.
+        self.coordinator.data[self.entity_description.key] = str(int_value)
+        self.async_write_ha_state()

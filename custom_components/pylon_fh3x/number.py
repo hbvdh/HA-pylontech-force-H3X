@@ -9,6 +9,7 @@ from homeassistant.components.number import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -141,7 +142,14 @@ class PylontechNumber(CoordinatorEntity, NumberEntity):
                 slave=self.entity_description.slave_id
             )
 
-        
-        if success:
-            self.coordinator.data[self.entity_description.key] = raw_value
-            self.async_write_ha_state()
+        # A write that was not confirmed must not look successful to the
+        # caller (UI, automation, Predbat): raise instead of doing nothing.
+        if not success:
+            raise HomeAssistantError(
+                f"The H3X did not confirm the new value for "
+                f"'{self.entity_description.name}' (register "
+                f"{self.entity_description.register_address}). The setting may "
+                "not have been applied; see the Home Assistant log."
+            )
+        self.coordinator.data[self.entity_description.key] = raw_value
+        self.async_write_ha_state()
