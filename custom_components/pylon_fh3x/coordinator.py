@@ -437,6 +437,11 @@ class PylontechCoordinator(DataUpdateCoordinator):
             port=port,
             timeout=5,
             retries=0,
+            # pymodbus reconnects on its own by default. This coordinator
+            # decides when to (re)connect (retry, backoff), and the dongle
+            # accepts only one Modbus client, so a second reconnect loop in
+            # the background must not exist.
+            reconnect_delay=0,
         )
         self.host = host
         # Extended battery statistics (0x1100, 0x1500, 0x1800), set via
@@ -473,6 +478,18 @@ class PylontechCoordinator(DataUpdateCoordinator):
             name=DOMAIN,
             update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL),
         )
+
+    def close_client(self) -> None:
+        """Close the Modbus connection for good (unload or failed setup).
+
+        Always called, also when not connected: that stops anything pymodbus
+        may still have pending, so the dongle's single client slot is freed.
+        """
+        try:
+            self.client.close()
+        except Exception as err:  # closing must never break unload
+            _LOGGER.debug("Error while closing the Modbus client: %s", err)
+        self._last_modbus_slave = None
 
     async def _pace_modbus(self, slave: int) -> None:
         """Apply request pacing, with extra delay when switching slaves."""

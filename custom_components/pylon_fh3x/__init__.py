@@ -37,8 +37,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Lets the coordinator update the device registry (firmware, model).
     coordinator.config_entry_ref = entry
 
-    
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except BaseException:
+        # Setup failed or was cancelled: Home Assistant retries with a new
+        # coordinator, so this connection must not stay open in the meantime.
+        coordinator.close_client()
+        raise
 
     
     hass.data[DOMAIN][entry.entry_id] = coordinator
@@ -56,11 +61,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         
-        coordinator = hass.data[DOMAIN][entry.entry_id]
-        if coordinator.client.connected:
-            coordinator.client.close()
-            
-        hass.data[DOMAIN].pop(entry.entry_id)
+        coordinator = hass.data[DOMAIN].pop(entry.entry_id)
+        coordinator.close_client()
 
     return unload_ok
 
