@@ -489,6 +489,70 @@ class PylontechCoordinator(DataUpdateCoordinator):
             update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL),
         )
 
+    async def _pace_modbus(self, slave: int) -> None:
+        """Apply request pacing, with extra delay when switching slaves."""
+        if (
+            self._last_modbus_slave is not None
+            and self._last_modbus_slave != slave
+        ):
+            delay = 0.2
+        else:
+            delay = 0.1
+
+        await asyncio.sleep(delay)
+        self._last_modbus_slave = slave
+
+    def _interval(self, block) -> int:
+        """Read interval for a block, 0 when off (also via the battery option)."""
+        if block[0] in BATTERY_DETAIL_ADDRESSES and not self.battery_details:
+            return 0
+        return block_interval(block)
+
+    @property
+    def bms_system_enabled(self) -> bool:
+        """True when the BMS system block (0x1100) is read at all."""
+        return self._interval(BMS_SYSTEM_BLOCK) > 0
+
+    @property
+    def bms_cell_voltages_enabled(self) -> bool:
+        """True when the cell voltages (0x1500) are read at all."""
+        return self.bms_system_enabled and self._interval(
+            (BMS_CELL_VOLTAGES_ADDRESS, 0, 1)
+        ) > 0
+
+    @property
+    def bms_cell_temperatures_enabled(self) -> bool:
+        """True when the cell temperatures (0x1800) are read at all."""
+        return self.bms_system_enabled and self._interval(
+            (BMS_CELL_TEMPERATURES_ADDRESS, 0, 1)
+        ) > 0
+
+    def _cell_block(self, address):
+        """(address, cell count, 1), or None when the count is not usable."""
+        count = self._bms_cell_count
+        if not count:
+            return None
+        if count > BMS_CELL_MAX_REGISTERS:
+            if not self._cell_count_warned:
+                self._cell_count_warned = True
+                _LOGGER.warning(
+                    "BMS reports %s cells; reading more than %s cells is not "
+                    "supported yet, cell blocks are skipped",
+                    count, BMS_CELL_MAX_REGISTERS,
+                )
+            return None
+        return (address, count, 1)
+
+    @property
+    def eps_current_enabled(self) -> bool:
+        """True when the 30600 block (EPS current) is read at all."""
+        return self._interval(MONITOR_EXT_BLOCK) > 0
+
+    @property
+    def ac_coupled_pv_enabled(self) -> bool:
+        """True when the 30600 block (AC-coupled PV) is read at all."""
+        return self._interval(MONITOR_EXT_BLOCK) > 0
+
     # ------------------------------------------------------------------
     # Serial number check
     # ------------------------------------------------------------------
@@ -626,70 +690,6 @@ class PylontechCoordinator(DataUpdateCoordinator):
             address, self.host,
         )
         return True
-
-    async def _pace_modbus(self, slave: int) -> None:
-        """Apply request pacing, with extra delay when switching slaves."""
-        if (
-            self._last_modbus_slave is not None
-            and self._last_modbus_slave != slave
-        ):
-            delay = 0.2
-        else:
-            delay = 0.1
-
-        await asyncio.sleep(delay)
-        self._last_modbus_slave = slave
-
-    def _interval(self, block) -> int:
-        """Read interval for a block, 0 when off (also via the battery option)."""
-        if block[0] in BATTERY_DETAIL_ADDRESSES and not self.battery_details:
-            return 0
-        return block_interval(block)
-
-    @property
-    def bms_system_enabled(self) -> bool:
-        """True when the BMS system block (0x1100) is read at all."""
-        return self._interval(BMS_SYSTEM_BLOCK) > 0
-
-    @property
-    def bms_cell_voltages_enabled(self) -> bool:
-        """True when the cell voltages (0x1500) are read at all."""
-        return self.bms_system_enabled and self._interval(
-            (BMS_CELL_VOLTAGES_ADDRESS, 0, 1)
-        ) > 0
-
-    @property
-    def bms_cell_temperatures_enabled(self) -> bool:
-        """True when the cell temperatures (0x1800) are read at all."""
-        return self.bms_system_enabled and self._interval(
-            (BMS_CELL_TEMPERATURES_ADDRESS, 0, 1)
-        ) > 0
-
-    def _cell_block(self, address):
-        """(address, cell count, 1), or None when the count is not usable."""
-        count = self._bms_cell_count
-        if not count:
-            return None
-        if count > BMS_CELL_MAX_REGISTERS:
-            if not self._cell_count_warned:
-                self._cell_count_warned = True
-                _LOGGER.warning(
-                    "BMS reports %s cells; reading more than %s cells is not "
-                    "supported yet, cell blocks are skipped",
-                    count, BMS_CELL_MAX_REGISTERS,
-                )
-            return None
-        return (address, count, 1)
-
-    @property
-    def eps_current_enabled(self) -> bool:
-        """True when the 30600 block (EPS current) is read at all."""
-        return self._interval(MONITOR_EXT_BLOCK) > 0
-
-    @property
-    def ac_coupled_pv_enabled(self) -> bool:
-        """True when the 30600 block (AC-coupled PV) is read at all."""
-        return self._interval(MONITOR_EXT_BLOCK) > 0
 
     def _optional_due(self, block) -> bool:
         """True when a block is on, not switched off, and its interval passed."""
