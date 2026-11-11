@@ -12,7 +12,9 @@ from pymodbus.exceptions import ModbusException
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DOMAIN, DEFAULT_SCAN_INTERVAL, MANUFACTURER, MODEL
+from .const import CONF_SERIAL, DOMAIN, DEFAULT_SCAN_INTERVAL, MANUFACTURER, MODEL
+from . import identity
+from .identity import IdentityGuard
 from .validation import TelemetryValidator, VALUE_RANGES
 from .telemetry_guard import TelemetryTransitionGuard
 
@@ -114,6 +116,13 @@ OPTIONAL_MAX_FAILURES = 3
 OPTIONAL_PAUSE_S = 3600
 
 IDENTITY_BLOCK = (30010, 31, 2)
+
+# Serial number check (identity.py). A deviating serial number is read again
+# after IDENTITY_CONFIRM_S before anything is concluded; while another device
+# is confirmed, the serial number is re-read every IDENTITY_MISMATCH_RECHECK_S
+# so the integration recovers by itself when the right H3X answers again.
+IDENTITY_CONFIRM_S = 60
+IDENTITY_MISMATCH_RECHECK_S = 300
 DEVICE_INFO_EXT_BLOCK = (30036, 43, 2)
 BMS_DEVICE_INFO_BLOCK = (0x1000, 31, 1)
 FAULT_BITS_BLOCK = (30148, 5, 2)
@@ -422,6 +431,10 @@ async def _modbus_read(client, address, count, target_id):
     return await client.read_holding_registers(address=address, count=count, device_id=target_id)
 
 
+class IdentityMismatch(UpdateFailed):
+    """Another H3X than the configured one answers; waiting for the user."""
+
+
 class PylontechCoordinator(DataUpdateCoordinator):
     """Coordinate Modbus reads and writes for the inverter."""
 
@@ -466,6 +479,8 @@ class PylontechCoordinator(DataUpdateCoordinator):
         # Last cell count from 0x1100, kept while that block is paused.
         self._bms_cell_count: int | None = None
         self._cell_count_warned = False
+        # Serial number check; __init__.py fills in the stored serial number.
+        self.identity_guard = IdentityGuard()
 
         super().__init__(
             hass,
@@ -537,6 +552,144 @@ class PylontechCoordinator(DataUpdateCoordinator):
     def ac_coupled_pv_enabled(self) -> bool:
         """True when the 30600 block (AC-coupled PV) is read at all."""
         return self._interval(MONITOR_EXT_BLOCK) > 0
+
+    # ------------------------------------------------------------------
+    # Serial number check
+    # ------------------------------------------------------------------
+    @property
+    def _identity_issue_id(self) -> str | None:
+        entry = getattr(self, "config_entry_ref", None)
+        return f"identity_mismatch_{entry.entry_id}" if entry is not None else None
+
+    def _store_serial(self, serial: str) -> None:
+        """Remember the serial number in the config entry (no reload)."""
+        entry = getattr(self, "config_entry_ref", None)
+        if entry is None or self.hass is None:
+            return
+        try:
+            self.hass.config_entries.async_update_entry(
+                entry, data={**entry.data, CONF_SERIAL: serial}
+            )
+        except Exception as err:  # never let bookkeeping break polling
+            _LOGGER.warning("Could not store the H3X serial number: %s", err)
+
+    def _set_identity_issue(self, found: str | None) -> None:
+        """Create (found) or remove (None) the Repair issue."""
+        issue_id = self._identity_issue_id
+        if issue_id is None or self.hass is None:
+            return
+        try:
+            from homeassistant.helpers import issue_registry as ir
+
+            if found is None:
+                ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+                return
+            entry = self.config_entry_ref
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                issue_id,
+                is_fixable=True,
+                is_persistent=False,
+                severity=ir.IssueSeverity.ERROR,
+                translation_key="identity_mismatch",
+                translation_placeholders={
+                    "host": str(self.host),
+                    "expected": str(self.identity_guard.expected),
+                    "found": found,
+                },
+                data={"entry_id": entry.entry_id, "serial": found},
+            )
+        except Exception as err:  # never let the notification break polling
+            _LOGGER.warning("Could not update the H3X Repair issue: %s", err)
+
+    def _check_identity(self, serial) -> bool:
+        """Judge a serial number reading; True when the device is accepted."""
+        guard = self.identity_guard
+        result = guard.observe(serial)
+        address = IDENTITY_BLOCK[0]
+        now = time.monotonic()
+        if result == identity.IGNORED:
+            _LOGGER.debug("Serial number %r not usable for the device check", serial)
+        elif result == identity.PENDING:
+            # Read it once more soon, before concluding anything.
+            self._optional_next_read[address] = now + IDENTITY_CONFIRM_S
+            if guard.expected is not None:
+                _LOGGER.warning(
+                    "The device at %s reported another serial number than the "
+                    "configured H3X; checking again in %s s. Writes are refused "
+                    "until this is cleared up.",
+                    self.host, IDENTITY_CONFIRM_S,
+                )
+        elif result == identity.LEARNED:
+            _LOGGER.info("H3X serial number remembered for the device check")
+            self._store_serial(serial)
+        elif result == identity.MISMATCH_NEW:
+            self._optional_next_read[address] = now + IDENTITY_MISMATCH_RECHECK_S
+            _LOGGER.error(
+                "Another H3X answers at %s (serial number %s instead of %s). "
+                "Nothing is read or written until this is confirmed under "
+                "Settings > System > Repairs.",
+                self.host, serial, guard.expected,
+            )
+            self._set_identity_issue(serial)
+        elif result == identity.MISMATCH:
+            self._optional_next_read[address] = now + IDENTITY_MISMATCH_RECHECK_S
+        elif result == identity.CLEARED:
+            _LOGGER.warning(
+                "The configured H3X answers again at %s; resuming.", self.host
+            )
+            self._set_identity_issue(None)
+        return not guard.writes_blocked
+
+    async def _recheck_identity(self) -> None:
+        """While another device is confirmed: re-read only the serial number."""
+        address = IDENTITY_BLOCK[0]
+        # The check must keep working here, whatever happened to the block.
+        self._optional_disabled.discard(address)
+        values = await self._read_optional(IDENTITY_BLOCK, decode_identity)
+        if values:
+            self._check_identity(values.get("serial"))
+        else:
+            # Not due, or the read failed: never wait longer than the recheck.
+            limit = time.monotonic() + IDENTITY_MISMATCH_RECHECK_S
+            if self._optional_next_read.get(address, 0) > limit:
+                self._optional_next_read[address] = limit
+
+    def accept_replacement(self, serial: str) -> None:
+        """The user confirmed a replaced H3X: continue with the new device.
+
+        Entities and history stay. Everything remembered about the old device
+        (validation baselines, cached device info) starts again.
+        """
+        self.identity_guard.accept(serial)
+        self._store_serial(serial)
+        self._set_identity_issue(None)
+        self._validator = TelemetryValidator()
+        self._transition_guard = TelemetryTransitionGuard()
+        self._last_valid_grid_currents = {}
+        self.device_identity = {}
+        self._slow_values.clear()
+        self._optional_keys.clear()
+        self._optional_failures.clear()
+        self._optional_disabled.clear()
+        self._optional_next_read.clear()
+        self._bms_cell_count = None
+        _LOGGER.warning(
+            "H3X with serial number %s accepted as the replacement at %s",
+            serial, self.host,
+        )
+
+    def _write_refused(self, address: int) -> bool:
+        """True (and logged) when writes are blocked by the serial number check."""
+        if not self.identity_guard.writes_blocked:
+            return False
+        _LOGGER.error(
+            "Write to register %s refused: the device at %s is not confirmed "
+            "to be the configured H3X (serial number check).",
+            address, self.host,
+        )
+        return True
 
     def _optional_due(self, block) -> bool:
         """True when a block is on, not switched off, and its interval passed."""
@@ -966,7 +1119,19 @@ class PylontechCoordinator(DataUpdateCoordinator):
         self._optional_reads_this_poll = 0
         self._in_poll = True
         try:
+            if self.identity_guard.mismatch:
+                # Another H3X answers: only re-read its serial number now and
+                # then, publish nothing, until the user confirms or the
+                # configured H3X is back.
+                await self._recheck_identity()
+                if self.identity_guard.mismatch:
+                    raise IdentityMismatch(
+                        "Another H3X than the configured one answers; "
+                        "confirm it under Settings > System > Repairs."
+                    )
             data = await self._async_poll_once()
+        except IdentityMismatch:
+            raise
         except UpdateFailed:
             self._register_poll_result(bad=True)
             raise
@@ -997,6 +1162,10 @@ class PylontechCoordinator(DataUpdateCoordinator):
             or self.update_interval != timedelta(seconds=DEFAULT_SCAN_INTERVAL)
         ):
             self._bad_polls = 0
+            # The device was away: check on the next poll that it is still
+            # the same H3X (the address may have gone to another device).
+            if self.identity_guard.expected is not None:
+                self._optional_next_read.pop(IDENTITY_BLOCK[0], None)
             if self.update_interval != timedelta(seconds=DEFAULT_SCAN_INTERVAL):
                 self.update_interval = timedelta(seconds=DEFAULT_SCAN_INTERVAL)
                 _LOGGER.warning(
@@ -1165,6 +1334,12 @@ class PylontechCoordinator(DataUpdateCoordinator):
                 ):
                     values = await self._read_optional(block, decode)
                     if values:
+                        if block is IDENTITY_BLOCK and not self._check_identity(
+                            values.get("serial")
+                        ):
+                            # Not (yet) the configured H3X: keep its details
+                            # out of the device registry.
+                            continue
                         self.device_identity.update(values)
                         identity_changed = True
                 if identity_changed:
@@ -1386,6 +1561,8 @@ class PylontechCoordinator(DataUpdateCoordinator):
 
     async def async_write_register(self, address: int, value: int, slave: int = 2) -> bool:
         """Write a signed or unsigned 16-bit value to a Modbus register."""
+        if self._write_refused(address):
+            return False
         try:
             if value < 0:
                 value &= 0xFFFF
@@ -1461,6 +1638,8 @@ class PylontechCoordinator(DataUpdateCoordinator):
 
     async def async_write_register_32bit(self, address: int, value: int, slave: int = 2) -> bool:
         """Write a 32-bit signed value as two consecutive registers."""
+        if self._write_refused(address):
+            return False
         try:
             # Split into two big-endian 16-bit registers.
             packed = struct.pack(">i", value)

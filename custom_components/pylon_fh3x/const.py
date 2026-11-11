@@ -15,6 +15,10 @@ CONF_PORT = "port"
 # make Home Assistant create new entities and orphan the existing ones).
 CONF_UNIQUE_ID_BASE = "unique_id_base"
 
+# Serial number of the H3X this entry belongs to, learned from the device. Used
+# only to check that the right device answers; never part of an entity ID.
+CONF_SERIAL = "serial"
+
 # Options (Configure): extended battery statistics (BMS summary 0x1100,
 # cell voltages 0x1500, cell temperatures 0x1800). Off by default.
 CONF_BATTERY_DETAILS = "battery_details"
