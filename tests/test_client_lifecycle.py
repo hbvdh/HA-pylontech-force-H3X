@@ -149,5 +149,42 @@ class UpdateListenerTests(unittest.TestCase):
         hass.config_entries.async_reload.assert_awaited_once_with("e1")
 
 
+class OptionChangedDuringSetupTests(unittest.TestCase):
+    """An option saved while the integration was loading is not lost."""
+
+    def setUp(self):
+        self.package, self.coordinator_module = load()
+
+    def _setup(self, options_after_refresh):
+        hass = SimpleNamespace(
+            data={},
+            config_entries=SimpleNamespace(
+                async_forward_entry_setups=AsyncMock(),
+                async_schedule_reload=MagicMock(),
+            ),
+        )
+        entry = SimpleNamespace(
+            entry_id="entry1", data={"host": "test", "port": 502}, options={},
+            async_on_unload=lambda func: None,
+            add_update_listener=lambda func: None,
+        )
+
+        class Coordinator(self.coordinator_module.PylontechCoordinator):
+            async def async_config_entry_first_refresh(inner):
+                # The user saves Configure while the first read is running.
+                entry.options = options_after_refresh
+
+        with patch.object(self.package, "PylontechCoordinator", Coordinator):
+            self.assertTrue(asyncio.run(self.package.async_setup_entry(hass, entry)))
+        return hass.config_entries.async_schedule_reload
+
+    def test_option_changed_during_setup_schedules_one_reload(self):
+        self._setup({"battery_details": True}).assert_called_once_with("entry1")
+
+    def test_unchanged_option_schedules_nothing(self):
+        self._setup({}).assert_not_called()
+        self._setup({"battery_details": False}).assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -54,6 +54,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Reload when the options (Configure) change.
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
+    # While the integration was (re)loading nothing listened for changes: if
+    # the option was changed in that window, pick it up with one more reload.
+    if coordinator.battery_details != entry.options.get(
+        CONF_BATTERY_DETAILS, DEFAULT_BATTERY_DETAILS
+    ):
+        hass.config_entries.async_schedule_reload(entry.entry_id)
+
     return True
 
 
