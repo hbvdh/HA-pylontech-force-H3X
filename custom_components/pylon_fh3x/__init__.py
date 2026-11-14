@@ -69,4 +69,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reload the integration after the options were changed."""
+    coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if coordinator is not None and coordinator.battery_details == entry.options.get(
+        CONF_BATTERY_DETAILS, DEFAULT_BATTERY_DETAILS
+    ):
+        # Not an options change (e.g. Reconfigure, which reloads by itself):
+        # reloading here as well would restart the integration twice.
+        return
     await hass.config_entries.async_reload(entry.entry_id)

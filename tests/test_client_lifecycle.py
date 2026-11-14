@@ -116,5 +116,38 @@ class ClientLifecycleTests(unittest.TestCase):
         self.assertEqual(hass.data[self.package.DOMAIN], {})
 
 
+class UpdateListenerTests(unittest.TestCase):
+    """The update listener reloads for an options change only."""
+
+    def setUp(self):
+        self.package, _ = load()
+
+    def _run(self, running_details, options):
+        hass = SimpleNamespace(
+            data={self.package.DOMAIN: {"e1": SimpleNamespace(battery_details=running_details)}},
+            config_entries=SimpleNamespace(async_reload=AsyncMock()),
+        )
+        entry = SimpleNamespace(entry_id="e1", options=options)
+        asyncio.run(self.package._async_update_listener(hass, entry))
+        return hass.config_entries.async_reload
+
+    def test_reconfigure_does_not_reload_a_second_time(self):
+        # Reconfigure changed entry.data and reloads by itself; options unchanged.
+        self._run(True, {"battery_details": True}).assert_not_awaited()
+        self._run(False, {}).assert_not_awaited()
+
+    def test_changed_option_reloads(self):
+        self._run(False, {"battery_details": True}).assert_awaited_once_with("e1")
+        self._run(True, {"battery_details": False}).assert_awaited_once_with("e1")
+
+    def test_reloads_when_no_coordinator_is_running(self):
+        hass = SimpleNamespace(
+            data={}, config_entries=SimpleNamespace(async_reload=AsyncMock())
+        )
+        entry = SimpleNamespace(entry_id="e1", options={})
+        asyncio.run(self.package._async_update_listener(hass, entry))
+        hass.config_entries.async_reload.assert_awaited_once_with("e1")
+
+
 if __name__ == "__main__":
     unittest.main()
