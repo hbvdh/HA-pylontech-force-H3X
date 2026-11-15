@@ -697,6 +697,16 @@ class PylontechCoordinator(DataUpdateCoordinator):
             serial, self.host,
         )
 
+    def write_failure_message(self, default: str) -> str:
+        """Error text for a failed write: say so when it was never sent."""
+        if not self.identity_guard.writes_blocked:
+            return default
+        return (
+            f"Not sent: the device at {self.host} is not confirmed to be the "
+            "configured H3X (serial number check). Try again in a few minutes; "
+            "if it stays, see Settings > System > Repairs."
+        )
+
     def _write_refused(self, address: int) -> bool:
         """True (and logged) when writes are blocked by the serial number check."""
         if not self.identity_guard.writes_blocked:

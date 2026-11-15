@@ -109,10 +109,12 @@ class PylontechSwitch(CoordinatorEntity, SwitchEntity):
         )
         if not success:
             raise HomeAssistantError(
-                f"The H3X did not confirm the new value for "
-                f"'{self.entity_description.name}' (register "
-                f"{self.entity_description.register_address}). The setting may "
-                "not have been applied; see the Home Assistant log."
+                self.coordinator.write_failure_message(
+                    f"The H3X did not confirm the new value for "
+                    f"'{self.entity_description.name}' (register "
+                    f"{self.entity_description.register_address}). The setting may "
+                    "not have been applied; see the Home Assistant log."
+                )
             )
         self.coordinator.data[self.entity_description.key] = 1
         self.async_write_ha_state()
@@ -126,10 +128,12 @@ class PylontechSwitch(CoordinatorEntity, SwitchEntity):
         )
         if not success:
             raise HomeAssistantError(
-                f"The H3X did not confirm the new value for "
-                f"'{self.entity_description.name}' (register "
-                f"{self.entity_description.register_address}). The setting may "
-                "not have been applied; see the Home Assistant log."
+                self.coordinator.write_failure_message(
+                    f"The H3X did not confirm the new value for "
+                    f"'{self.entity_description.name}' (register "
+                    f"{self.entity_description.register_address}). The setting may "
+                    "not have been applied; see the Home Assistant log."
+                )
             )
         self.coordinator.data[self.entity_description.key] = 0
         self.async_write_ha_state()

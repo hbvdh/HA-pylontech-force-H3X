@@ -113,6 +113,8 @@ class IdentityCoordinatorTests(unittest.IsolatedAsyncioTestCase):
         await self.run_for(600)
         self.assertEqual(self.calls.count(30010), 1)
         self.assertFalse(self.coordinator.identity_guard.writes_blocked)
+        # A normal failed write keeps its own error text.
+        self.assertEqual(self.coordinator.write_failure_message("x"), "x")
 
     async def test_single_corrupt_serial_reading_recovers_by_itself(self):
         await self.poll()
@@ -121,6 +123,10 @@ class IdentityCoordinatorTests(unittest.IsolatedAsyncioTestCase):
         data = await self.poll()
         self.assertTrue(data)
         self.assertTrue(self.coordinator.identity_guard.writes_blocked)
+        # The error shown for a write now says it was never sent.
+        message = self.coordinator.write_failure_message("did not confirm")
+        self.assertIn("Not sent", message)
+        self.assertNotIn("did not confirm", message)
         self.set_serial(OWN)                    # the dongle answers sanely again
         await self.run_for(coordinator_module.IDENTITY_CONFIRM_S)
         self.assertFalse(self.coordinator.identity_guard.writes_blocked)
