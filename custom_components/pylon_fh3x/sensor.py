@@ -30,7 +30,7 @@ from .alarms import (
     combined_bits,
     issues_state,
 )
-from .device import device_info
+from .device import device_info, unique_id_base
 from .const import DOMAIN
 
 # All sensors are defined here. Each 'key' must match exactly the key
@@ -694,7 +694,7 @@ class PylontechSensor(CoordinatorEntity, SensorEntity):
         self.entity_description = description
         
         # Unique ID in the entity registry
-        self._attr_unique_id = f"{DOMAIN}_{entry.data['host']}_{description.key}"
+        self._attr_unique_id = f"{DOMAIN}_{unique_id_base(entry)}_{description.key}"
 
         # Groups all sensors under one device in Home Assistant
         self._attr_device_info = device_info(coordinator, entry)

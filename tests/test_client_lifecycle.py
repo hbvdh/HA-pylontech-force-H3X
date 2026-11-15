@@ -116,5 +116,75 @@ class ClientLifecycleTests(unittest.TestCase):
         self.assertEqual(hass.data[self.package.DOMAIN], {})
 
 
+class UpdateListenerTests(unittest.TestCase):
+    """The update listener reloads for an options change only."""
+
+    def setUp(self):
+        self.package, _ = load()
+
+    def _run(self, running_details, options):
+        hass = SimpleNamespace(
+            data={self.package.DOMAIN: {"e1": SimpleNamespace(battery_details=running_details)}},
+            config_entries=SimpleNamespace(async_reload=AsyncMock()),
+        )
+        entry = SimpleNamespace(entry_id="e1", options=options)
+        asyncio.run(self.package._async_update_listener(hass, entry))
+        return hass.config_entries.async_reload
+
+    def test_reconfigure_does_not_reload_a_second_time(self):
+        # Reconfigure changed entry.data and reloads by itself; options unchanged.
+        self._run(True, {"battery_details": True}).assert_not_awaited()
+        self._run(False, {}).assert_not_awaited()
+
+    def test_changed_option_reloads(self):
+        self._run(False, {"battery_details": True}).assert_awaited_once_with("e1")
+        self._run(True, {"battery_details": False}).assert_awaited_once_with("e1")
+
+    def test_reloads_when_no_coordinator_is_running(self):
+        hass = SimpleNamespace(
+            data={}, config_entries=SimpleNamespace(async_reload=AsyncMock())
+        )
+        entry = SimpleNamespace(entry_id="e1", options={})
+        asyncio.run(self.package._async_update_listener(hass, entry))
+        hass.config_entries.async_reload.assert_awaited_once_with("e1")
+
+
+class OptionChangedDuringSetupTests(unittest.TestCase):
+    """An option saved while the integration was loading is not lost."""
+
+    def setUp(self):
+        self.package, self.coordinator_module = load()
+
+    def _setup(self, options_after_refresh):
+        hass = SimpleNamespace(
+            data={},
+            config_entries=SimpleNamespace(
+                async_forward_entry_setups=AsyncMock(),
+                async_schedule_reload=MagicMock(),
+            ),
+        )
+        entry = SimpleNamespace(
+            entry_id="entry1", data={"host": "test", "port": 502}, options={},
+            async_on_unload=lambda func: None,
+            add_update_listener=lambda func: None,
+        )
+
+        class Coordinator(self.coordinator_module.PylontechCoordinator):
+            async def async_config_entry_first_refresh(inner):
+                # The user saves Configure while the first read is running.
+                entry.options = options_after_refresh
+
+        with patch.object(self.package, "PylontechCoordinator", Coordinator):
+            self.assertTrue(asyncio.run(self.package.async_setup_entry(hass, entry)))
+        return hass.config_entries.async_schedule_reload
+
+    def test_option_changed_during_setup_schedules_one_reload(self):
+        self._setup({"battery_details": True}).assert_called_once_with("entry1")
+
+    def test_unchanged_option_schedules_nothing(self):
+        self._setup({}).assert_not_called()
+        self._setup({"battery_details": False}).assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

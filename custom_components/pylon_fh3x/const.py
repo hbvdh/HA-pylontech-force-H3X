@@ -10,6 +10,11 @@ DEFAULT_SCAN_INTERVAL = 5
 CONF_HOST = "host"
 CONF_PORT = "port"
 
+# Host the entity unique IDs were first created with. Stored on Reconfigure so
+# that a new IP address or hostname does not change the unique IDs (which would
+# make Home Assistant create new entities and orphan the existing ones).
+CONF_UNIQUE_ID_BASE = "unique_id_base"
+
 # Options (Configure): extended battery statistics (BMS summary 0x1100,
 # cell voltages 0x1500, cell temperatures 0x1800). Off by default.
 CONF_BATTERY_DETAILS = "battery_details"

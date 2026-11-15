@@ -13,8 +13,10 @@ from .const import (
     DEFAULT_PORT,
     DEFAULT_NAME,
     CONF_BATTERY_DETAILS,
+    CONF_UNIQUE_ID_BASE,
     DEFAULT_BATTERY_DETAILS,
 )
+from .device import unique_id_base
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -86,9 +88,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
             else:
-                # Store the new endpoint and reload the integration.
+                # Store the new endpoint and reload the integration. Keep the
+                # host the unique IDs were created with, so a new address does
+                # not create new entities.
                 return self.async_update_reload_and_abort(
-                    entry, data_updates=user_input
+                    entry,
+                    data_updates={
+                        **user_input,
+                        CONF_UNIQUE_ID_BASE: unique_id_base(entry),
+                    },
                 )
 
         # Pre-fill the form with the current values.

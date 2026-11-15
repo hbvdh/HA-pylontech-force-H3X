@@ -13,7 +13,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .device import device_info
+from .device import device_info, unique_id_base
 from .const import DOMAIN
 
 @dataclass
@@ -112,7 +112,7 @@ class PylontechNumber(CoordinatorEntity, NumberEntity):
         super().__init__(coordinator)
         self.entity_description = description
         
-        self._attr_unique_id = f"{DOMAIN}_{entry.data['host']}_{description.key}"
+        self._attr_unique_id = f"{DOMAIN}_{unique_id_base(entry)}_{description.key}"
         self._attr_device_info = device_info(coordinator, entry)
 
     @property

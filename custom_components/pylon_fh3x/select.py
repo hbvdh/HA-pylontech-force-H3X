@@ -9,7 +9,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .device import device_info
+from .device import device_info, unique_id_base
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -96,7 +96,7 @@ class PylontechSelect(CoordinatorEntity, SelectEntity):
         # Last unmapped raw value that was logged, so it is logged once.
         self._warned_raw_value = None
 
-        self._attr_unique_id = f"{DOMAIN}_{entry.data['host']}_{description.key}"
+        self._attr_unique_id = f"{DOMAIN}_{unique_id_base(entry)}_{description.key}"
         self._attr_device_info = device_info(coordinator, entry)
 
     def _raw_value(self) -> int | None:

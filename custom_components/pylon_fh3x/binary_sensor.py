@@ -11,7 +11,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .alarms import PCS_FAULTS, active_issues, combined_bits
 from .const import DOMAIN
-from .device import device_info
+from .device import device_info, unique_id_base
 
 
 async def async_setup_entry(
@@ -40,7 +40,7 @@ class PylontechProblemSensor(CoordinatorEntity, BinarySensorEntity):
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
-        self._attr_unique_id = f"{DOMAIN}_{entry.data['host']}_inverter_problem"
+        self._attr_unique_id = f"{DOMAIN}_{unique_id_base(entry)}_inverter_problem"
         self._attr_device_info = device_info(coordinator, entry)
 
     @property
@@ -72,7 +72,7 @@ class PylontechEpsEnabledSensor(CoordinatorEntity, BinarySensorEntity):
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
-        self._attr_unique_id = f"{DOMAIN}_{entry.data['host']}_eps_enabled"
+        self._attr_unique_id = f"{DOMAIN}_{unique_id_base(entry)}_eps_enabled"
         self._attr_device_info = device_info(coordinator, entry)
 
     @property
@@ -100,7 +100,7 @@ class PylontechBmsAlarmSensor(CoordinatorEntity, BinarySensorEntity):
 
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
-        self._attr_unique_id = f"{DOMAIN}_{entry.data['host']}_bms_alarm"
+        self._attr_unique_id = f"{DOMAIN}_{unique_id_base(entry)}_bms_alarm"
         self._attr_device_info = device_info(coordinator, entry)
 
     @property
