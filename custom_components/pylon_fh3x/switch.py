@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -106,10 +107,15 @@ class PylontechSwitch(CoordinatorEntity, SwitchEntity):
             value=1,
             slave=self.entity_description.slave_id
         )
-        if success:
-            
-            self.coordinator.data[self.entity_description.key] = 1
-            self.async_write_ha_state()
+        if not success:
+            raise HomeAssistantError(
+                f"The H3X did not confirm the new value for "
+                f"'{self.entity_description.name}' (register "
+                f"{self.entity_description.register_address}). The setting may "
+                "not have been applied; see the Home Assistant log."
+            )
+        self.coordinator.data[self.entity_description.key] = 1
+        self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs) -> None:
         """Disable the associated inverter setting."""
@@ -118,6 +124,12 @@ class PylontechSwitch(CoordinatorEntity, SwitchEntity):
             value=0,
             slave=self.entity_description.slave_id
         )
-        if success:
-            self.coordinator.data[self.entity_description.key] = 0
-            self.async_write_ha_state()
+        if not success:
+            raise HomeAssistantError(
+                f"The H3X did not confirm the new value for "
+                f"'{self.entity_description.name}' (register "
+                f"{self.entity_description.register_address}). The setting may "
+                "not have been applied; see the Home Assistant log."
+            )
+        self.coordinator.data[self.entity_description.key] = 0
+        self.async_write_ha_state()

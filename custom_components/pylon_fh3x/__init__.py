@@ -40,8 +40,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Serial number learned earlier; checked against the device that answers.
     coordinator.identity_guard.expected = entry.data.get(CONF_SERIAL)
 
-    
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except BaseException:
+        # Setup failed or was cancelled: Home Assistant retries with a new
+        # coordinator, so this connection must not stay open in the meantime.
+        coordinator.close_client()
+        raise
 
     
     hass.data[DOMAIN][entry.entry_id] = coordinator
@@ -52,6 +57,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Reload when the options (Configure) change.
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
+    # While the integration was (re)loading nothing listened for changes: if
+    # the option was changed in that window, pick it up with one more reload.
+    if coordinator.battery_details != entry.options.get(
+        CONF_BATTERY_DETAILS, DEFAULT_BATTERY_DETAILS
+    ):
+        hass.config_entries.async_schedule_reload(entry.entry_id)
+
     return True
 
 
@@ -59,11 +71,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         
-        coordinator = hass.data[DOMAIN][entry.entry_id]
-        if coordinator.client.connected:
-            coordinator.client.close()
-            
-        hass.data[DOMAIN].pop(entry.entry_id)
+        coordinator = hass.data[DOMAIN].pop(entry.entry_id)
+        coordinator.close_client()
 
     return unload_ok
 
