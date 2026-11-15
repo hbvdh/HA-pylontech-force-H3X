@@ -70,7 +70,40 @@ class DailyCounterTests(unittest.TestCase):
         self.assertNotIn(KEY, self.validator.validate({KEY: 0.0}))  # candidate
         out = self.run_polls(0.0, POLL_S)                              # confirmed
         self.assertEqual(out[KEY], 0.0)
+        self.assertEqual(self.warnings, [])   # a confirmed reset is normal
         self.assertEqual(self.run_polls(0.31, BLOCK_S)[KEY], 0.31)
+
+    def test_reset_with_some_discharge_already_counted_is_quiet(self):
+        self.run_polls(11.109, BLOCK_S)
+        self.assertNotIn(KEY, self.run_polls(0.058, POLL_S))
+        self.assertEqual(self.run_polls(0.058, POLL_S)[KEY], 0.058)
+        self.assertEqual(self.warnings, [])
+
+    def test_single_bad_zero_is_reported_once_the_old_value_returns(self):
+        self.run_polls(9.87, BLOCK_S)
+        self.assertNotIn(KEY, self.run_polls(0.0, POLL_S))
+        self.assertEqual(self.warnings, [])              # not yet known
+        self.assertEqual(self.run_polls(9.87, POLL_S)[KEY], 9.87)
+        self.assertEqual(len(self.warnings), 1)
+        self.assertIn("bms_charge_energy_today=0.0", self.warnings[0])
+        self.assertIn("not confirmed", self.warnings[0])
+        self.run_polls(9.87, BLOCK_S)
+        self.assertEqual(len(self.warnings), 1)
+
+    def test_two_different_low_values_are_reported(self):
+        self.run_polls(9.87, BLOCK_S)
+        self.assertNotIn(KEY, self.run_polls(0.0, POLL_S))
+        self.assertNotIn(KEY, self.run_polls(5.0, POLL_S))
+        self.assertEqual(len(self.warnings), 1)
+        self.assertIn("bms_charge_energy_today=5.0", self.warnings[0])
+
+    def test_candidate_followed_by_a_missing_value_is_reported(self):
+        self.run_polls(9.87, BLOCK_S)
+        self.assertNotIn(KEY, self.run_polls(0.0, POLL_S))
+        self.now += POLL_S
+        self.validator.validate({})
+        self.assertEqual(len(self.warnings), 1)
+        self.assertIn("not confirmed", self.warnings[0])
 
     def test_small_dip_is_still_rejected(self):
         self.run_polls(9.87, BLOCK_S)
