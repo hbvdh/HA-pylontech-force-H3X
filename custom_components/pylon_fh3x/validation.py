@@ -129,6 +129,9 @@ class TelemetryValidator:
         self._counters = {}
         self._pending_counters = {}
         self._invalid_keys = set()
+        # Reset candidates dropped without a warning, waiting for the next
+        # sample: key -> (candidate value, last accepted value).
+        self._unconfirmed_resets = {}
 
     @staticmethod
     def _counter_step_valid(key, previous, current, elapsed):
@@ -167,6 +170,13 @@ class TelemetryValidator:
         self._pending_counters[key] = (value, now)
         return False
 
+    @staticmethod
+    def _warn_unconfirmed_reset(key, value):
+        _LOGGER.warning(
+            "Ignored Pylontech value %s=%r: counter reset was not confirmed "
+            "by the next reading", key, value,
+        )
+
     def validate(self, sample):
         """Return valid source values and derive power only from those values."""
         data = dict(sample)
@@ -188,14 +198,30 @@ class TelemetryValidator:
                 reject(key, f"outside sanity range [{minimum}, {maximum}]")
 
         for key in COUNTER_RATES:
+            unconfirmed = self._unconfirmed_resets.pop(key, None)
             if key not in data:
                 self._pending_counters.pop(key, None)
-            elif not self._counter_valid(key, data[key], now):
+                if unconfirmed is not None:
+                    self._warn_unconfirmed_reset(key, unconfirmed[0])
+                continue
+            previous = self._counters.get(key)
+            had_candidate = key in self._pending_counters
+            if self._counter_valid(key, data[key], now):
+                # Back in the old range: the drop was a bad reading, not a reset.
+                if unconfirmed is not None and (
+                    data[key] >= COUNTER_RESET_RATIO * unconfirmed[1]
+                ):
+                    self._warn_unconfirmed_reset(key, unconfirmed[0])
+            elif previous is None:
                 # A first sample is expected at startup; do not warn about it.
-                if key in self._counters:
-                    reject(key, "implausible counter change or unconfirmed reset")
-                else:
-                    data.pop(key)
+                data.pop(key)
+            elif key in self._pending_counters and not had_candidate:
+                # First sample of a possible reset (e.g. the daily counters at
+                # midnight): hold it back quietly. A warning follows only when
+                # the next sample does not confirm it.
+                self._unconfirmed_resets[key] = (data.pop(key), previous[0])
+            else:
+                reject(key, "implausible counter change or unconfirmed reset")
 
         if ("bms_cell_voltage_min" in data and "bms_cell_voltage_max" in data
                 and data["bms_cell_voltage_min"] > data["bms_cell_voltage_max"]):
