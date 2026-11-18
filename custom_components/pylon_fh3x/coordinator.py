@@ -817,7 +817,12 @@ class PylontechCoordinator(DataUpdateCoordinator):
         return None
 
     def build_device_info(self, entry) -> dict:
-        """Device registry info, enriched with firmware data when available."""
+        """Device registry fields, enriched with firmware data when available.
+
+        A plain dict on purpose: device.device_info() turns it into a
+        DeviceInfo for the entities, _push_device_info() passes the fields to
+        the device registry as keyword arguments.
+        """
         ident = self.device_identity
         info = {
             "identifiers": {(DOMAIN, entry.entry_id)},
