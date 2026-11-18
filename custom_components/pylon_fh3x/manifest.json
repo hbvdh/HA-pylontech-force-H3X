@@ -5,7 +5,9 @@
     "@Wietse108"
   ],
   "config_flow": true,
-  "dependencies": [],
+  "dependencies": [
+    "repairs"
+  ],
   "documentation": "https://github.com/hbvdh/HA-pylontech-force-H3X",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/hbvdh/HA-pylontech-force-H3X/issues",

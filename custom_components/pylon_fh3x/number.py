@@ -146,10 +146,12 @@ class PylontechNumber(CoordinatorEntity, NumberEntity):
         # caller (UI, automation, Predbat): raise instead of doing nothing.
         if not success:
             raise HomeAssistantError(
-                f"The H3X did not confirm the new value for "
-                f"'{self.entity_description.name}' (register "
-                f"{self.entity_description.register_address}). The setting may "
-                "not have been applied; see the Home Assistant log."
+                self.coordinator.write_failure_message(
+                    f"The H3X did not confirm the new value for "
+                    f"'{self.entity_description.name}' (register "
+                    f"{self.entity_description.register_address}). The setting may "
+                    "not have been applied; see the Home Assistant log."
+                )
             )
         self.coordinator.data[self.entity_description.key] = raw_value
         self.async_write_ha_state()

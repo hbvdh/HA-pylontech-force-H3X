@@ -64,9 +64,11 @@ def load_platform(name):
         return importlib.import_module(f"{package}.{name}")
 
 
-def make_entity(cls, description, data, success):
+def make_entity(cls, description, data, success, refused=None):
     coordinator = SimpleNamespace(
         data=dict(data),
+        # The coordinator replaces the text when the write was never sent.
+        write_failure_message=lambda default: refused or default,
         async_write_register=AsyncMock(return_value=success),
         async_write_register_32bit=AsyncMock(return_value=success),
     )
@@ -97,6 +99,20 @@ class NumberWriteTests(unittest.TestCase):
             asyncio.run(entity.async_set_native_value(80))
         self.assertEqual(entity.coordinator.data["charge_limit_soc"], 90)
         self.assertEqual(entity.state_writes, 0)
+
+    def test_error_says_not_confirmed_or_never_sent(self):
+        entity = self._entity("charge_limit_soc", {"charge_limit_soc": 90}, False)
+        with self.assertRaises(HomeAssistantErrorStub) as raised:
+            asyncio.run(entity.async_set_native_value(80))
+        self.assertIn("did not confirm", str(raised.exception))
+
+        entity = make_entity(
+            self.platform.PylontechNumber, self.descriptions["charge_limit_soc"],
+            {"charge_limit_soc": 90}, False, refused="Not sent: serial number check",
+        )
+        with self.assertRaises(HomeAssistantErrorStub) as raised:
+            asyncio.run(entity.async_set_native_value(80))
+        self.assertEqual(str(raised.exception), "Not sent: serial number check")
 
     def test_failed_32bit_write_raises_and_keeps_state(self):
         entity = self._entity(

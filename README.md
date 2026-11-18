@@ -147,6 +147,7 @@ Common issues:
 - `Connection refused`: Another device or script is already connected to the inverter's Modbus port.
 - `Timeout`: Poor WiFi signal to the inverter dongle.
 - Inverter got a new IP address (e.g. after a router or firewall change, or the dongle switched between LAN and Wi-Fi): use **⋮ → Reconfigure** on the integration card. Entities and history are kept.
+- `Another H3X answers` under **Settings → System → Repairs**: the integration remembers the serial number of your H3X and found a different one at the configured address. Nothing is read or written until you decide. If your H3X was replaced (e.g. under warranty), open the repair and select **Submit**: the integration continues with the new unit and all entities, history and automations are kept. If it was not replaced, another device took over the address: use **⋮ → Reconfigure** to enter the address of your own H3X.
 
 Feel free to open an issue on this repository if you encounter any bugs!
 

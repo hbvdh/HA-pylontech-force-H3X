@@ -97,6 +97,10 @@ class OptionalReadTests(unittest.IsolatedAsyncioTestCase):
             None, "test", 502, battery_details=self.battery_details
         )
         self.coordinator.use_single_block_read = False
+        # A running installation: the serial number is already known, so the
+        # identity block keeps its normal hourly rhythm (see test_identity.py
+        # for learning and mismatches).
+        self.coordinator.identity_guard.expected = "SN12345678"
         self.blocks = optional_blocks()
         self.refused = set()
         self.silent = set()
