@@ -589,5 +589,87 @@ class ModbusRobustnessTests(unittest.IsolatedAsyncioTestCase):
                 write_task.cancel()
 
 
+class CancelledCallerTests(unittest.IsolatedAsyncioTestCase):
+    """A cancelled caller (automation in mode: restart) must not break off a write."""
+
+    def setUp(self):
+        self.coordinator = coordinator_module.PylontechCoordinator(None, "h3x.test", 502)
+        self.client = self.coordinator.client
+        self.client.read_holding_registers.return_value = modbus_response([123])
+
+    async def _cancel_during_write(self, call):
+        write_started = asyncio.Event()
+        release_write = asyncio.Event()
+
+        async def slow_write(**kwargs):
+            write_started.set()
+            await release_write.wait()
+            return modbus_response([])
+
+        self.client.write_register.side_effect = slow_write
+        self.client.write_registers.side_effect = slow_write
+        caller = asyncio.create_task(call())
+        await asyncio.wait_for(write_started.wait(), timeout=1)
+        caller.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await caller
+        # The caller is gone, but the transaction runs on.
+        release_write.set()
+        await asyncio.wait_for(
+            asyncio.gather(*self.coordinator._write_tasks), timeout=1
+        )
+
+    async def test_16bit_write_completes_after_the_caller_is_cancelled(self):
+        await self._cancel_during_write(
+            lambda: self.coordinator.async_write_register(40901, 123, 2)
+        )
+        self.assertEqual(self.client.write_register.await_count, 1)
+        # Verified by a read-back, then the usual refresh: nothing broken off.
+        self.assertEqual(self.client.read_holding_registers.await_count, 1)
+        self.assertEqual(self.coordinator.refresh_calls, 1)
+        self.client.close.assert_not_called()
+        self.assertFalse(self.coordinator._write_tasks)
+
+    async def test_32bit_write_completes_after_the_caller_is_cancelled(self):
+        self.client.read_holding_registers.return_value = modbus_response(
+            list(struct.unpack(">HH", struct.pack(">i", -3000)))
+        )
+        await self._cancel_during_write(
+            lambda: self.coordinator.async_write_register_32bit(40401, -3000, 2)
+        )
+        self.assertEqual(self.client.write_registers.await_count, 1)
+        self.assertEqual(self.coordinator.refresh_calls, 1)
+        self.client.close.assert_not_called()
+
+    async def test_refresh_after_a_write_is_not_cancelled_with_the_caller(self):
+        refresh_started = asyncio.Event()
+        release_refresh = asyncio.Event()
+        finished = []
+
+        async def slow_refresh():
+            refresh_started.set()
+            await release_refresh.wait()
+            finished.append(True)
+
+        self.coordinator.async_request_refresh = slow_refresh
+        caller = asyncio.create_task(
+            self.coordinator.async_write_register(40901, 123, 2)
+        )
+        await asyncio.wait_for(refresh_started.wait(), timeout=1)
+        caller.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await caller
+        release_refresh.set()
+        results = await asyncio.wait_for(
+            asyncio.gather(*self.coordinator._write_tasks), timeout=1
+        )
+        self.assertEqual(finished, [True])
+        self.assertEqual(results, [True])
+
+    async def test_normal_write_still_returns_its_result(self):
+        self.assertTrue(await self.coordinator.async_write_register(40901, 123, 2))
+        self.assertFalse(self.coordinator._write_tasks)
+
+
 if __name__ == "__main__":
     unittest.main()

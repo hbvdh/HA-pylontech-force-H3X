@@ -463,6 +463,9 @@ class PylontechCoordinator(DataUpdateCoordinator):
         self._validator = TelemetryValidator()
         self._transition_guard = TelemetryTransitionGuard()
         self._modbus_lock = asyncio.Lock()
+        # Writes run in their own task so a cancelled caller cannot break off
+        # a Modbus transaction halfway (see _run_write).
+        self._write_tasks: set[asyncio.Task] = set()
         self._last_modbus_slave = None
         self._last_valid_grid_currents = {}
         # Off by default: the combined read caused errors on a live system.
@@ -1591,7 +1594,32 @@ class PylontechCoordinator(DataUpdateCoordinator):
             self._last_modbus_slave = None
             return False
 
+    async def _run_write(self, write) -> bool:
+        """Run a write to the end, even when the caller is cancelled.
+
+        An automation in mode: restart, or a service call whose connection
+        drops, cancels the task that called us. Without this, that cancel
+        would break off the Modbus transaction halfway (pymodbus then reports
+        "Request cancelled outside library") or the coordinator refresh that
+        follows a write, which Home Assistant then silently counts as a failed
+        update: the entities stay unavailable to service calls until the next
+        poll. The write runs in its own task and is shielded from the caller;
+        the caller still sees its own cancellation.
+        """
+        task = asyncio.ensure_future(write)
+        self._write_tasks.add(task)
+        task.add_done_callback(self._write_tasks.discard)
+        return await asyncio.shield(task)
+
     async def async_write_register(self, address: int, value: int, slave: int = 2) -> bool:
+        """Write a signed or unsigned 16-bit value to a Modbus register."""
+        return await self._run_write(self._write_register(address, value, slave))
+
+    async def async_write_register_32bit(self, address: int, value: int, slave: int = 2) -> bool:
+        """Write a 32-bit signed value as two consecutive registers."""
+        return await self._run_write(self._write_register_32bit(address, value, slave))
+
+    async def _write_register(self, address: int, value: int, slave: int = 2) -> bool:
         """Write a signed or unsigned 16-bit value to a Modbus register."""
         if self._write_refused(address):
             return False
@@ -1668,7 +1696,7 @@ class PylontechCoordinator(DataUpdateCoordinator):
 
         
 
-    async def async_write_register_32bit(self, address: int, value: int, slave: int = 2) -> bool:
+    async def _write_register_32bit(self, address: int, value: int, slave: int = 2) -> bool:
         """Write a 32-bit signed value as two consecutive registers."""
         if self._write_refused(address):
             return False
