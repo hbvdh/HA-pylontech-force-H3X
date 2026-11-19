@@ -6,6 +6,10 @@ from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import patch
 
+class DeviceInfoStub(dict):
+    """Stands in for Home Assistant's DeviceInfo (a dict on older versions)."""
+
+
 
 class SensorEntityStub:
     pass
@@ -26,7 +30,7 @@ def load_sensor():
         "homeassistant", "homeassistant.components", "homeassistant.components.sensor",
         "homeassistant.config_entries", "homeassistant.const", "homeassistant.core",
         "homeassistant.helpers", "homeassistant.helpers.entity_platform",
-        "homeassistant.helpers.update_coordinator", "fh3x_sensor_test",
+        "homeassistant.helpers.device_registry", "homeassistant.helpers.update_coordinator", "fh3x_sensor_test",
     )}
     sensor = modules["homeassistant.components.sensor"]
     sensor.SensorDeviceClass = SimpleNamespace(**{name: name.lower() for name in (
@@ -53,6 +57,7 @@ def load_sensor():
     modules["homeassistant.core"].HomeAssistant = object
     modules["homeassistant.helpers.entity_platform"].AddEntitiesCallback = object
     modules["homeassistant.helpers.update_coordinator"].CoordinatorEntity = CoordinatorEntityStub
+    modules["homeassistant.helpers.device_registry"].DeviceInfo = DeviceInfoStub
     modules["fh3x_sensor_test"].__path__ = [str(
         Path(__file__).resolve().parents[1] / "custom_components" / "pylon_fh3x"
     )]

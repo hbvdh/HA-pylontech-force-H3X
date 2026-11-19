@@ -22,6 +22,10 @@ class DescriptionStub:
     native_step: float | None = None
     mode: str | None = None
 
+class DeviceInfoStub(dict):
+    """Stands in for Home Assistant's DeviceInfo (a dict on older versions)."""
+
+
 
 class CoordinatorEntityStub:
     def __init__(self, coordinator):
@@ -42,7 +46,7 @@ def load_platform(name):
         f"homeassistant.components.{name}", "homeassistant.config_entries",
         "homeassistant.const", "homeassistant.core", "homeassistant.exceptions",
         "homeassistant.helpers", "homeassistant.helpers.entity_platform",
-        "homeassistant.helpers.update_coordinator", package,
+        "homeassistant.helpers.device_registry", "homeassistant.helpers.update_coordinator", package,
     )}
     component = modules[f"homeassistant.components.{name}"]
     component.NumberEntity = component.SwitchEntity = component.SelectEntity = object
@@ -57,6 +61,7 @@ def load_platform(name):
     modules["homeassistant.exceptions"].HomeAssistantError = HomeAssistantErrorStub
     modules["homeassistant.helpers.entity_platform"].AddEntitiesCallback = object
     modules["homeassistant.helpers.update_coordinator"].CoordinatorEntity = CoordinatorEntityStub
+    modules["homeassistant.helpers.device_registry"].DeviceInfo = DeviceInfoStub
     modules[package].__path__ = [str(
         Path(__file__).resolve().parents[1] / "custom_components" / "pylon_fh3x"
     )]

@@ -8,6 +8,10 @@ from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
+class DeviceInfoStub(dict):
+    """Stands in for Home Assistant's DeviceInfo (a dict on older versions)."""
+
+
 
 class SelectEntityStub:
     pass
@@ -38,7 +42,7 @@ def load_select():
         "homeassistant", "homeassistant.components", "homeassistant.components.select",
         "homeassistant.config_entries", "homeassistant.core", "homeassistant.exceptions",
         "homeassistant.helpers", "homeassistant.helpers.entity_platform",
-        "homeassistant.helpers.update_coordinator", "fh3x_select_test",
+        "homeassistant.helpers.device_registry", "homeassistant.helpers.update_coordinator", "fh3x_select_test",
     )}
     modules["homeassistant.components.select"].SelectEntity = SelectEntityStub
     modules["homeassistant.components.select"].SelectEntityDescription = SelectEntityDescriptionStub
@@ -48,6 +52,7 @@ def load_select():
     modules["homeassistant.exceptions"].HomeAssistantError = HomeAssistantErrorStub
     modules["homeassistant.helpers.entity_platform"].AddEntitiesCallback = object
     modules["homeassistant.helpers.update_coordinator"].CoordinatorEntity = CoordinatorEntityStub
+    modules["homeassistant.helpers.device_registry"].DeviceInfo = DeviceInfoStub
     modules["fh3x_select_test"].__path__ = [str(
         Path(__file__).resolve().parents[1] / "custom_components" / "pylon_fh3x"
     )]

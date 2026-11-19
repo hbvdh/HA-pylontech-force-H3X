@@ -26,7 +26,8 @@ def load():
     modules = {name: ModuleType(name) for name in (
         "voluptuous", "homeassistant", "homeassistant.config_entries",
         "homeassistant.core", "homeassistant.data_entry_flow",
-        "homeassistant.exceptions", PACKAGE,
+        "homeassistant.exceptions", "homeassistant.helpers",
+        "homeassistant.helpers.device_registry", PACKAGE,
     )}
     vol = modules["voluptuous"]
     vol.Schema = lambda schema: schema
@@ -40,6 +41,7 @@ def load():
     modules["homeassistant.core"].callback = lambda func: func
     modules["homeassistant.data_entry_flow"].FlowResult = dict
     modules["homeassistant.exceptions"].HomeAssistantError = Exception
+    modules["homeassistant.helpers.device_registry"].DeviceInfo = dict
     modules[PACKAGE].__path__ = [str(
         Path(__file__).resolve().parents[1] / "custom_components" / "pylon_fh3x"
     )]
@@ -85,6 +87,44 @@ class UniqueIdBaseTests(unittest.TestCase):
             text = (source / f"{name}.py").read_text()
             self.assertNotIn("entry.data['host']", text, name)
             self.assertIn("unique_id_base(entry)", text, name)
+
+
+class DeviceInfoTests(unittest.TestCase):
+    """Entities get a DeviceInfo built once from plain fields."""
+
+    def setUp(self):
+        self.device, _ = load()
+
+    def test_fields_from_the_coordinator_become_a_device_info(self):
+        built = []
+
+        class DeviceInfoStub(dict):
+            def __init__(self, **fields):
+                built.append(fields)
+                super().__init__(**fields)
+
+        coordinator = SimpleNamespace(
+            build_device_info=lambda entry: {
+                "identifiers": {("pylon_fh3x", entry.entry_id)},
+                "name": entry.title,
+                "serial_number": "ABC123456",
+            }
+        )
+        entry = SimpleNamespace(entry_id="e1", title="Force H3X")
+        with patch.object(self.device, "DeviceInfo", DeviceInfoStub):
+            info = self.device.device_info(coordinator, entry)
+        self.assertIsInstance(info, DeviceInfoStub)
+        self.assertEqual(built, [{
+            "identifiers": {("pylon_fh3x", "e1")},
+            "name": "Force H3X",
+            "serial_number": "ABC123456",
+        }])
+
+    def test_fallback_without_a_builder(self):
+        entry = SimpleNamespace(entry_id="e1", title="Force H3X")
+        info = self.device.device_info(SimpleNamespace(), entry)
+        self.assertEqual(info["identifiers"], {("pylon_fh3x", "e1")})
+        self.assertEqual(info["name"], "Force H3X")
 
 
 if __name__ == "__main__":
