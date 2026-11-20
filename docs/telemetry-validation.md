@@ -52,8 +52,8 @@ ratings or protection settings. Limits live in
 | BMS terminal temperature | -40 to 150 degrees C (wide on purpose: a hot terminal must stay visible) |
 | Grid mode (30160) | 0 to 2 |
 
-The [included Modbus protocol](ModBus-Protocol-Pylon-FH3X-V1.2_20250811.md)
-defines register types, units, scaling, signs and percentage fields. The
+The [register map](modbus-protocol.md)
+lists register types, units, scaling, signs and percentage fields. The
 [Pylontech Force H3X datasheet](https://shop.kpenergy.se/globalassets/product-sheets/inverters/pylontech/pylontech-force-h3x-hybrid-ess-datasheet-260121-en.pdf)
 lists models up to 15 kW, 24 kW PV input, 1,000 V maximum PV voltage, 50 A
 continuous battery current and 22.5 kVA peak backup output. The sanity limits allow

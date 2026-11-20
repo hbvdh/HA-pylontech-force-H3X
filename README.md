@@ -140,7 +140,7 @@ App remains the source of truth, and all schedule details must be configured in 
 
 Developed and tested on Home Assistant 2026.11. Other models and firmware versions are likely to work; some optional blocks (such as 30600) are only answered by newer firmware and are then switched off automatically.
 
-The register map used is in [docs/ModBus-Protocol-Pylon-FH3X-V1.2_20250811.md](docs/ModBus-Protocol-Pylon-FH3X-V1.2_20250811.md).
+The register map used is in [docs/modbus-protocol.md](docs/modbus-protocol.md).
 
 ---
 
