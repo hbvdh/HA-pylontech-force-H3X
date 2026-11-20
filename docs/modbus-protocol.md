@@ -1,7 +1,21 @@
-# Pylontech FH3X Modbus Protocol Reference
+# Pylontech Force H3X Modbus register reference
 
-Quick-reference guide for the FH3X inverter/BMS Modbus TCP interface, filtered down to
-the register tables and bit-field definitions needed to build an integration.
+Register reference for this integration. It started as an extract of the Pylontech
+FH3X Modbus protocol V1.2 (2025-08-11) and has been extended with everything the
+integration reads that V1.2 does not describe, plus what we learned on live systems.
+
+**How to read this document**
+
+- Rows and notes without a marker come from protocol V1.2.
+- **(not in V1.2)** marks additions. The source is given with each one:
+  - *PR map*: the register map of the [Pylontech Research integration](https://github.com/Pylontech-Research/HA-pylontech-force-H3X)
+    (MIT), which is based on newer manufacturer documents (PCS V1.36, BMS V1.67).
+  - *live*: observed on a running system (FH3X-5K-HY-1P-EU, PCS V1.0.0.43, BMS V0.34).
+- **Integration:** notes say how this integration uses a register when that is not
+  obvious from the table.
+
+See [Practical notes](#practical-notes-dongle-behaviour) for what the dongle does and
+does not tolerate, and [optional-reads.md](optional-reads.md) for the read intervals.
 
 ## Connection
 
@@ -25,6 +39,15 @@ The device exposes two separate register maps, selected by **slave/unit address*
  management. All registers at address 2 are read/write capable. See
  [Address 2 register data](#address-2-register-data).
 
+**BMS address areas (address 1)** *(not in V1.2; V1.2 refers to an "address table" it
+does not include. PR map, live)*
+
+| Base | Content | Section |
+| --- | --- | --- |
+| 0x1000 | BMS equipment information | [1.1](#11-equipment-information) |
+| 0x1100 | System summary (all piles together) | [1.4](#14-system-summary-0x1100) |
+| 0x1400 | ESS / pile 1 | [1.3](#13-single-ess-information) |
+
 ---
 
 ## Address 1 register data
@@ -35,7 +58,10 @@ The device exposes two separate register maps, selected by **slave/unit address*
 | --- | --- | --- | --- |
 | Register | Read/Write | Content | Remark |
 | 0x100A | RO | 0x0106 | Main version 01; subversion 06, then V1.6 |
+| 0x100E~0x101D | RO | Product model | 16 registers, ASCII *(not in V1.2; PR map)* |
 | 0x101E | RO | 0x0101 | HMI version; V1.1 |
+
+**Integration:** reads 0x1000-0x101E (31 registers) once per hour for the device page.
 
 ### 1.2 Remote Control Information
 
@@ -107,6 +133,7 @@ the address is: 0x1400+0x0003:
 | 0x0049 | RO | Alarm status 2 |  | See Appendix I-4 |
 | 0x0050~ 0x005F | RO | SN code |  | Totally 16 addresses, support max 32 ASCII code; if less than 32, use 0x00 |
 | 0x0100~ 0x02C1 | RO | Voltage of cell number 000~449 | 0.001V | Max 450 cells in series |
+| 0x0400~ | RO | Temperature of cell number 000~ | 0.1℃ | Signed. One register per cell, same order as the voltages. *(not in V1.2; PR map, live)* |
 | 0x0668 | RO | VB | 0.1V | Voltage between B+ and B- |
 | 0x0669~ 0x0686 | RO | Each bit represents the balancing status of a cell. Each register tracks 16 battery cells: 0x0669[bit0-bit15] → Cells 0-15 0x066A[bit0-bit15] → Cells 16-31 Continue adding registers following this pattern. |  | 0: Balance status OFF 1: Balance statuc ON |
 
@@ -117,6 +144,43 @@ the address is: 0x1400+0x0003:
 From bottom to top corresponds to module 0
 
 From left to right corresponds to cell 0 to 31
+
+**Integration** (pile 1, base 0x1400):
+
+- Every poll: 0x1403, 30 registers (total voltage, temperature, SOC, cycles, cell
+  min/max voltage, SOH).
+- With *Extended battery statistics* on: cell voltages from 0x1500 and cell
+  temperatures from 0x1800, one read each with the cell count from 0x1137 (96 on a
+  3-module FH3X). Never in the same poll as another optional block (see
+  [Practical notes](#practical-notes-dongle-behaviour)).
+- Larger batteries would need the cell reads split into chunks; not supported yet.
+
+### 1.4 System summary (0x1100)
+
+*(Not in V1.2. Layout from the PR map, checked against live values.)*
+
+Summary for the whole battery system. Offsets 0x0000-0x0039 have the same meaning,
+unit and format as in the [single-ESS table](#13-single-ess-information). From offset
+0x0048 the layout is **different**: alarm status 2 is at 0x004E here, not at 0x0049
+as in the pile block.
+
+| Offset Address | Read/Write | Content | Unit | Remark |
+| --- | --- | --- | --- | --- |
+| 0x0000~0x0039 | RO | As in the single-ESS table | | |
+| 0x0048 | RO | Insulation resistance | kΩ | |
+| 0x0049 | RO | Insulation error level | | |
+| 0x004A | RO | Max terminal temperature | 0.1℃ | Signed |
+| 0x004B | RO | Min terminal temperature | 0.1℃ | Signed |
+| 0x004C | RO | Channel of max terminal temperature | | |
+| 0x004D | RO | Channel of min terminal temperature | | |
+| 0x004E | RO | Alarm status 2 | | See Appendix I-4 |
+
+- BMS firmware that does not fill 0x0048-0x004D returns zeros. The integration
+  shows those sensors as unknown instead of 0 kΩ / 0.0 ℃.
+- The daily charge/discharge counters (0x0027-0x002A) reset at the BMS's own midnight.
+
+**Integration:** reads 0x1100-0x114E (79 registers) every 5 minutes, only when
+*Extended battery statistics* is on.
 
 ---
 
@@ -131,6 +195,7 @@ regardless of their logical read/write intent.**
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Register Address | HEX 16 | Register Name | Byte | Format | Description& instruction & | Default value | Read/Write |
 | 30010 | 753A | Manufacturer Name | 16 | ASCII\*16 |  |  | RO |
+| 30036 | 7554 | Max output power | 2 | U16 | W. *(not in V1.2; PR map)* |  | RO |
 | 30018 | 7542 | Model Name | 16 | ASCII\*16 |  |  | RO |
 | 30026 | 754A | Serial Number | 16 | ASCII\*16 |  |  | RO |
 | 30039 | 7557 | Software Version | 4 | U8\*4 | V x.x.x.x |  | RO |
@@ -140,6 +205,10 @@ regardless of their logical read/write intent.**
 | 30061 | 756D | AFCI Firmware Version | 4 | U8\*4 | Vx.x.x.x |  | RO |
 | 30063 | 756E | Serial number(E) | 16 | ASCII\*16 | Serial number Expansion |  | RO |
 | 30071 | 7577 | Number of parallel machines | 2 | U16 |  |  | RO |
+
+**Integration:** reads 30010-30040 (identity) and 30036-30078 (versions, ratings)
+once per hour. The serial number (30026) identifies the H3X: a different serial
+number is read again before anything is concluded (replaced-H3X check).
 
 ### Monitor Information & Statistics
 
@@ -152,10 +221,12 @@ regardless of their logical read/write intent.**
 | 30106 | 759A | AC PF | 2 | 0.01 | U16 |  | 100 | RO |
 | 30107 | 759B | AC Q/PF direction | 2 |  | U16 | 1: Lag 2: Lead |  | RO |
 | 30108 | 759C | Grid Total Power | 4 | W | S32 | Positive: Import from Grid Negative: Export to Grid |  | RO |
-| 30110 | 759E | Third party meter active power | 4 | W | U32 |  |  | RO |
+| 30110 | 759E | Third party meter active power | 4 | W | U32 | V1.2 says U32; read as **S32**, as the PR map does. Third-party PV inverter on meter CT2. |  | RO |
 | 30112 | 75A0 | Third party meter energy | 4 | KWH | Float32 |  |  |  |
 | 30115 | 75A3 | Inverter state | 2 |  | U16 | 0: Wait 1: Normal 2: Fault |  | RO |
 | 30116 | 75A4 | Waiting time | 2 | S | U16 | After the inverter is powered up, it needs to wait for some time before self-testing | 60s | RO |
+| 30117 | 75A5 | Fault code | 2 |  | U16 | 0 = none. *(not in V1.2; PR map)* |  | RO |
+| 30118 | 75A6 | Warning code | 2 |  | U16 | 0 = none. *(not in V1.2; PR map)* |  | RO |
 | 30119 | 75A7 | PV1 voltage PV1 | 2 | 0.1V | U16 |  |  | RO |
 | 30120 | 75A8 | PV1 current PV1 | 2 | 0.1A | U16 |  |  | RO |
 | 30121 | 75A9 | PV2 voltage PV2 | 2 | 0.1V | U16 |  |  | RO |
@@ -211,9 +282,26 @@ regardless of their logical read/write intent.**
 | 30188 | 75EC | Grid Power S S | 4 | W | S32 | Positive: Import from Grid Negative: Export to Grid |  | RO |
 | 30190 | 75EE | Grid Power T T | 4 | W | S32 | Positive: Import from Grid Negative: Export to Grid |  | RO |
 | 30197 | 75F5 | Bus P to M voltage Bus PM | 2 | 0.1V | U16 |  |  | RO |
+| 30600 | 7788 | EPS current R | 2 | 0.1A | U16 | *(not in V1.2; PR map)* |  | RO |
+| 30601 | 7789 | EPS current S | 2 | 0.1A | U16 | *(not in V1.2; PR map)* |  | RO |
+| 30602 | 778A | EPS current T | 2 | 0.1A | U16 | *(not in V1.2; PR map)* |  | RO |
 | 30625 | 77A1 | Fan on-off state | 2 |  | U16 | 0: Turn off 1: Turn on |  | RO |
-| 30626 | 77A2 | Fault\_Extend(Bit) | 4 |  | U32 | Appendix VIII | 0 | R |
-| 30628 | 77A4 | Warning\_Extend(Bit) | 4 |  | U32 | Appendix IX | 0 | R |
+| 30626 | 77A2 | Fault\_Extend(Bit) | 4 |  | U32 | Appendix VIII (bits 32 and up) | 0 | R |
+| 30628 | 77A4 | Warning\_Extend(Bit) | 4 |  | U32 | Appendix IX (bits 32 and up) | 0 | R |
+| 30654 | 77BE | AC-coupled PV power R | 4 | W | S32 | *(not in V1.2; PR map)* |  | RO |
+| 30656 | 77C0 | AC-coupled PV power S | 4 | W | S32 | *(not in V1.2; PR map)* |  | RO |
+| 30658 | 77C2 | AC-coupled PV power T | 4 | W | S32 | *(not in V1.2; PR map)* |  | RO |
+
+**Integration:**
+
+- Every 5 s: 30100-30191 in one read (92 registers). If that read fails three
+  times in a row, it falls back to 30100/48, 30156/30 and 30183/9.
+- Every 5 minutes: 30148-30152 (fault/warning bits, firmware update state) and the
+  30600 block (30600-30659, 60 registers). The 30600 block is only answered by
+  newer firmware; older firmware refuses it and the block is switched off.
+- 30160 (AC Output Substate) is shown as *Grid mode*: Grid-tied / Backup.
+- Fault/warning names come from 30148/30150 (bits 0-31) combined with 30626/30628
+  (bits 32 and up).
 
 ### Exception code
 
@@ -382,7 +470,7 @@ regardless of their logical read/write intent.**
 | 40902 | 9FC6 | Charge limit SOC | 2 | % | U16 | The upper limit SOC of charging Range: 50-100 | 100% | RW |
 | 40903 | 9FC7 | EPS limit SOC/ Discharge limit soc EPSSOC | 2 | % | U16 | The lower limit SOC of backup discharging Range: 5-100 | 7% | RW |
 | 40904 | 9FC8 | EPS enable EPS | 2 |  | U16 | Set available of backup 0: Disable EPS output 1: Enable EPS output | 0 | RW |
-| 40907 | 9FCB | EMS mode | 2 |  | U16 | 0: Self-Consumption 1: Back up mode 2: Off-Grid mode 3: Feed in priority mode 4: User mode 5:PN-Customer mode | 4 | RW |
+| 40907 | 9FCB | EMS mode | 2 |  | U16 | 0: Self-Consumption 1: Back up mode 2: Off-Grid mode 3: Feed in priority mode 4: User mode 5:PN-Customer mode. *Not in V1.2 (live):* 262 (0x0106) = Dynamic mode set in the Pylontech app; shown read-only, never written. | 4 | RW |
 | 40908 | 9FCC | Time 1 enable | 2 |  | U16 |  |  | RW |
 | 40909 | 9FCD | Time 1 start time | 2 |  | U16 | High byte: Hour Low byte: Minute For example 14:30 Register value should be 0xE1E |  | RW |
 | 40910 | 9FCE | Time 1 end time | 2 |  | U16 | High byte: Hour ow byte: Minute For example 15:30 Register value should be 0xF1E |  | RW |
@@ -412,7 +500,12 @@ regardless of their logical read/write intent.**
 | 40934 | 9FE6 | RealTime Hour\_Minute \_ | 2 |  | U16 | High byte: Hour Low byte: Minute For example 14:30 Register value should be 0xE1E |  | RW |
 | 40935 | 9FE7 | RealTime Secon\_Weekday \_ | 2 |  | U16 | High byte: Second Low byte: Weekday For example 59s Wednesday Register value should be 0x3803 Note:Sunday is the first day of one week |  | RW |
 | 40936 | 9FE8 | Reset reconnect time after back-up overload | 2 |  | U16 | 0: Null 1: Reset reconnect time after back-up overload | 0 | RW |
-| 40937 | 9FE9 | ImpWMeterLim | 4 |  | U32 | Limit the power get from the grid |  | RW |
+| 40937 | 9FE9 | ImpWMeterLim | 4 | W | U32 | Limit the power get from the grid |  | RW |
+
+**Integration:** reads 40400-40402, 40848 and 40901-40926 every poll; 40937 every
+5 minutes, display only (never written). Writes: 40401, 40848, 40901-40903, 40907
+and the time-slot enables 40908/40914/40920/40926. A write that the H3X does not
+confirm is reported as an error in Home Assistant.
 
 ---
 
@@ -654,7 +747,7 @@ Error Code1 1
 | Bit1 | Current sensor fault |
 | Bit2 | GFCI device fault |
 | Bit3 | Relay fault |
-| Bit4 | Reserve |
+| Bit4 | Reserve — *PV voltage high (not in V1.2; PR map)* |
 | Bit5 | ISO fault |
 | Bit6 | GFCI fault |
 | Bit7 | Temperature over fault |
@@ -666,8 +759,8 @@ Error Code1 1
 | Bit13 | Main and voice MCU communication fault |
 | Bit14 | BUS voltage high fault |
 | Bit15 | BUS voltage low fault |
-| Bit16 | Reserve |
-| Bit17 | Reserve |
+| Bit16 | Reserve — *DRM S9 fault (not in V1.2; PR map)* |
+| Bit17 | Reserve — *DRM S0 fault (not in V1.2; PR map)* |
 | Bit18 | PE Connection missing |
 | Bit19 | Bus voltage unbalance Bus |
 | Bit20 | BMS communication fail |
@@ -676,22 +769,43 @@ Error Code1 1
 | Bit23 | Battery is not connected |
 | Bit24 | Backup load over voltage |
 | Bit25 | DC Art Fault |
-| Bit26 | Reserve |
+| Bit26 | Reserve — *AFCI self-test fault (not in V1.2; PR map)* |
 | Bit27 | Address assignment fault (Parallel system) |
 | Bit28 | Battery precharge circuit fault |
 | Bit29 | Battery protection GPIO fault |
 | Bit30 | Shutdown circuit fault |
 | Bit31 | Battery relay fault |
 
+Bits 32 and up come from Fault\_Extend (30626, bit 0 = bit 32). *(Not in V1.2; PR map.)*
+
+|  |  |
+| --- | --- |
+| Fault Code | Fault Description |
+| Bit32 | Meter communication fault |
+| Bit34 | Parallel slave CAN communication loss |
+| Bit35 | Parallel slave received master fault |
+| Bit36 | Parallel slave synchronization loss |
+| Bit39 | Parallel software version mismatch |
+| Bit40 | Battery voltage exceeds limit |
+| Bit42 | Parallel grid phase-order mismatch |
+| Bit43 | EPS voltage exceeds limit |
+| Bit44 | Grid phase fault |
+
 ### Appendix IX: Warning(Bit)
 
 |  |  |
 | --- | --- |
 | Warning Code | Warning Description |
+| Bit0 | PV1 overcurrent *(not in V1.2; PR map)* |
+| Bit1 | PV2 overcurrent *(not in V1.2; PR map)* |
+| Bit2 | PV3 overcurrent *(not in V1.2; PR map)* |
+| Bit4 | PV1 undervoltage *(not in V1.2; PR map)* |
+| Bit5 | PV2 undervoltage *(not in V1.2; PR map)* |
+| Bit6 | PV3 undervoltage *(not in V1.2; PR map)* |
 | Bit8 | BUS over voltage |
 | Bit9 | BUS under voltage |
 | Bit10 | INV over current |
-| Bit11 | ISO |
+| Bit11 | ISO — named *Anti-islanding protection* in the PR map and in this integration |
 | Bit12 | Grid peak over voltage |
 | Bit13 | FW update |
 | Bit14 | PE connection missing |
@@ -699,3 +813,39 @@ Error Code1 1
 | Bit16 | Fan abnormal |
 | Bit17 | Backup load overload warning |
 | Bit18 | SPD failure warning |
+| Bit28 | Battery overcurrent *(not in V1.2; PR map)* |
+
+Bits 32 and up come from Warning\_Extend (30628, bit 0 = bit 32). *(Not in V1.2; PR map.)*
+
+|  |  |
+| --- | --- |
+| Warning Code | Warning Description |
+| Bit35 | First grid-connection parameters error |
+| Bit37 | Bus boost anomaly |
+| Bit38 | EPS instantaneous overcurrent |
+
+Unknown set bits are shown as "Unknown bit N" rather than dropped.
+
+---
+
+## Practical notes (dongle behaviour)
+
+*(Not in V1.2. Learned on live systems; the reason for the read pattern in
+`coordinator.py`.)*
+
+- The bottleneck is the Wi-Fi/LAN dongle, not the H3X itself. Since dongle firmware
+  V1.3.1 (September 2026) it now and then returns late, mixed-up or implausible
+  replies. The integration therefore checks every value (see
+  [telemetry-validation.md](telemetry-validation.md)) and re-reads suspicious samples
+  instead of trusting a single reply.
+- Fewer, larger reads work better than many small ones: 30100-30191 in one request
+  gives fewer chances for a mixed-up reply and keeps all values from the same moment.
+- Too many extra requests at once makes the dongle hang until the H3X is restarted.
+  This happened on a first attempt at reading the cell blocks. Since then: at most
+  one optional block per poll, cell blocks only in a poll without any other optional
+  block, and a failed optional block is paused for an hour (switched off after three
+  refusals in a row).
+- Registers a firmware version does not support are refused, not answered with
+  zeros, except 0x1148-0x114D (BMS), which older BMS firmware fills with zeros.
+- The H3X can change its IP address after a firmware update. Use *Reconfigure* to
+  enter the new address; the entities stay as they are.
