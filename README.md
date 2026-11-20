@@ -1,26 +1,27 @@
-Fork from https://github.com/wietse108/HA-pylontech-force-H3X
-
 # Pylontech Force H3X Integration for Home Assistant via Modbus TCP
 
 ![HACS Custom](https://img.shields.io/badge/HACS-Custom_Repository-orange.svg?style=for-the-badge)
 ![Version](https://img.shields.io/github/v/release/hbvdh/HA-pylontech-force-H3X?style=for-the-badge&label=version)
 ![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg?style=for-the-badge)
 
-A fully native, UI-configurable Home Assistant custom integration for the **Pylontech Force H3X** inverter and BMS system. 
+A native, UI-configurable Home Assistant custom integration for the **Pylontech Force H3X** hybrid inverter and its battery (BMS). It connects directly to the inverter over Modbus TCP and reads dozens of registers in a few well-spaced blocks, so the inverter's Wi-Fi/LAN dongle is not overloaded.
 
-Say goodbye to complex, manual Modbus YAML configurations! This integration connects directly to your inverter over Modbus TCP, utilizing smart chunk-reading to poll dozens of registers efficiently without overloading the inverter's WiFi dongle.
+> Originally created by [wietse108](https://github.com/wietse108/HA-pylontech-force-H3X). This repository has since been developed further independently and is maintained here.
 
 ---
 
 ## ✨ Features
 
-- **UI Config Flow:** Set up your inverter in seconds via the Home Assistant integrations page. No YAML required!
-- **Smart Chunk Polling:** Reads all required data from both the Inverter (Slave 2) and the BMS (Slave 1) in highly optimized, delay-spaced blocks to prevent Modbus timeouts.
-- **Interactive Controls:** Not just reading data! Set your EMS mode, charge/discharge power limits, and SOC limits directly from the Home Assistant UI.
-- **Auto-Discovery:** Automatically creates and groups all sensors and controls under a single Device in your dashboard.
-- **Energy Dashboard Ready:** All energy/power sensors are configured with the correct `state_class` and `device_class` to work out-of-the-box with the Home Assistant Energy Dashboard.
-- **Resilient Connection:** Built-in auto-reconnect and error handling.
-- **Measurement validation:** Rejects malformed reads and implausible telemetry before sending values to Home Assistant. Derived power uses validated inputs; energy counters are checked for impossible jumps. See [validation behaviour and limits](docs/telemetry-validation.md).
+- **UI setup:** add the inverter from the Home Assistant integrations page. No YAML.
+- **Efficient polling:** reads the inverter (slave 2) and the BMS (slave 1) every 5 seconds in a few optimised, spaced blocks to prevent Modbus timeouts. Less urgent data is read every few minutes or hourly; see [optional reads](docs/optional-reads.md).
+- **Controls:** set the EMS mode, charge/discharge power and SOC limits, and switch the charge/discharge schedules on or off.
+- **Verified writes:** every write is read back from the inverter. If the H3X does not confirm it, Home Assistant shows an error instead of a value that was never applied. A write that has started always runs to the end, even when the automation that sent it is cancelled.
+- **One device:** all sensors and controls are grouped under a single device, with model, serial number and firmware versions on the device page.
+- **Energy Dashboard ready:** energy and power sensors have the correct `state_class` and `device_class`.
+- **Resilient connection:** the integration owns the single Modbus connection, reconnects by itself, and polls less often while the dongle does not answer (every 60 s after three failed polls) until it answers again.
+- **Checks which H3X answers:** the integration remembers the serial number of your H3X. If another device answers at the configured address (for example after a router change), nothing is written and a Repair issue explains what to do. See [Troubleshooting](#-troubleshooting).
+- **Measurement validation:** malformed reads and implausible values are rejected before they reach Home Assistant; energy counters are checked for impossible jumps. See [validation behaviour and limits](docs/telemetry-validation.md).
+- **Address changes without losing history:** a new IP address can be entered via **Reconfigure**; entities, history and automations are kept.
 
 ## 📊 Included Sensors & Controls
 
@@ -46,7 +47,7 @@ This integration pulls comprehensive data from both the Inverter and the interna
 * **🏷️ Device information:** model, serial number, PCS firmware and BMS/HMI version on the device page, plus diagnostic sensors for the PCS, AFCI, BMS and HMI versions and the PCS rated output power.
 * **📏 Grid Import Power Limit (diagnostic):** the import limit configured in the inverter (register 40937, read-only).
 
-**Optional reads.** Besides the normal 5 s polling, some blocks are read less often, each with its own interval at the top of `coordinator.py` (0 = off): device information (`READ_IDENTITY`, `READ_DEVICE_INFO_EXT`, `READ_BMS_DEVICE_INFO`) every hour to pick up firmware updates; fault bits (`READ_FAULT_BITS`), import limit (`READ_SITE_LIMIT`) and the extended monitor block at 30600 (`READ_MONITOR_EXT`: EPS current, AC-coupled PV) every 5 minutes. The battery blocks (BMS summary every 5 minutes, cell voltages and cell temperatures every 15 minutes) are only read when **Extended battery statistics** is on under **Configure**. The master switch `ENABLE_OPTIONAL_READS` turns all optional reads off. The fault and warning codes themselves come every 5 s with the normal 30100 block; the fault bits only add which fault it is. Each block gets a single attempt per interval. No answer pauses the block for an hour, after which one new attempt is made; three refusals in a row (register not supported by the firmware) switch it off until the next restart. While a block is paused or off, its sensors show unknown instead of a stale value. Optional failures never trigger the backoff and are skipped in any poll where a normal read failed. A failed optional read is always logged as a warning; successful reads (address, duration) are logged at debug level, so turn on **Enable debug logging** for the integration to see every read. The 30600 block is only answered by newer firmware; on older firmware it is switched off after three refusals. Firmware Update State is shown as text (Idle / Download finished / Update finished) with the raw value as attribute. Fault and warning bit names come from the official [Pylontech Research integration](https://github.com/Pylontech-Research/HA-pylontech-force-H3X) (MIT).
+**Optional reads.** Some blocks (device information, fault bits, import limit, extended monitor block, battery statistics) are read every few minutes or hourly instead of every 5 seconds. Intervals, what happens when the firmware does not support a block, and logging are described in [docs/optional-reads.md](docs/optional-reads.md).
 
 ## 📈 Dashboard cards
 
@@ -57,17 +58,17 @@ Ready-made [button-card](https://github.com/custom-cards/button-card) configurat
 
 ---
 
-## ⚠️ Important Note: Charge & Discharge Control
+## ⚠️ Important: Charge & Discharge Control
 
-If you want to use the **Charge/Discharge Power Ref** setting to manually force the battery to charge or discharge, **you MUST set the `EMS Mode` to `User mode`**. 
-If the system is set to any other mode (like `Self-Consumption`), the inverter's internal logic will override your command and revert the setting back to its default value!
+If you want to use **Charge/Discharge Power Ref** to force the battery to charge or discharge, **set `EMS Mode` to `User mode` first**. In any other mode (like `Self-Consumption`) the inverter's own logic overrides the command and resets the value.
 
-After the writing new settings, not all of the entities show the right value. I'm still working on that
+**Automations that write to the H3X:** use `mode: queued` instead of `mode: restart`. With `restart`, a new trigger cancels the running automation while it may be writing. The integration finishes the write anyway, but with `queued` each run simply waits for the previous one.
 
 ---
-## 📅 EMS Charge/Discharge Schedules (with v1.1.4)
 
-If you have configured Charge/Discharge period schedules (up to 4 of them) in the Pylontech app, you can now enable or disable those schedules directly from Home Assistant.
+## 📅 EMS Charge/Discharge Schedules
+
+If you have configured Charge/Discharge period schedules (up to 4 of them) in the Pylontech app, you can enable or disable those schedules directly from Home Assistant.
 
 ⚠️ This integration can currently only toggle schedules on/off — it cannot view or edit the schedule contents (times, days, power settings).
 
@@ -87,9 +88,8 @@ Each schedule appears in Home Assistant as below, and can be turned ON or OFF as
 * switch.pylontech_force_h3x_period_4
 
 ### ⚠️ Important Note - No overlap allowed
-Active schedules timings must not overlap. Overlapping periods may fail to activate or behave unpredictably.
-Recommended approach
-Use clean boundaries between periods. For example:
+Active schedule timings must not overlap. Overlapping periods may fail to activate or behave unpredictably.
+Recommended approach: use clean boundaries between periods. For example:
 * Period 1: 07:00 → 10:59
 * Period 2: 11:00 → 16:59
 
@@ -99,17 +99,16 @@ App remains the source of truth, and all schedule details must be configured in 
 
 ## 🚀 Installation
 
-### Option 1: Via HACS (Recommended)
-This integration is easily installable via the [Home Assistant Community Store (HACS)](https://hacs.xyz/).
+### Option 1: Via HACS (recommended)
 
-1. Open Home Assistant and navigate to **HACS** > **Integrations**.
-2. Click the three dots (`...`) in the top right corner and select **Custom repositories**.
-3. Paste the URL of this GitHub repository.
-4. Select **Integration** as the category and click **Add**.
-5. Close the popup, search for **Pylontech Force H3X** in HACS, and click **Download**.
-6. **Restart Home Assistant.**
+1. Open **HACS** in Home Assistant.
+2. Click the three dots (⋮) in the top right corner and select **Custom repositories**.
+3. Paste the URL of this repository, select **Integration** as the type and click **Add**.
+4. Search for **Pylontech Force H3X** in HACS and click **Download**.
+5. **Restart Home Assistant.**
 
-### Option 2: Manual Installation
+### Option 2: Manual installation
+
 1. Download the latest release from this repository.
 2. Copy the `custom_components/pylon_fh3x` folder into your Home Assistant `custom_components` directory.
 3. **Restart Home Assistant.**
@@ -118,53 +117,66 @@ This integration is easily installable via the [Home Assistant Community Store (
 
 ## ⚙️ Configuration
 
-1. In Home Assistant, go to **Settings** > **Devices & Services**.
-2. Click the **+ Add Integration** button in the bottom right.
+1. In Home Assistant, go to **Settings** > **Devices & services**.
+2. Click **+ Add Integration**.
 3. Search for **Pylontech Force H3X**.
-4. Enter the **IP Address** of your inverter and the **Port** (default is `502`).
-5. Click **Submit**. Your sensors will appear immediately!
+4. Enter the **IP address** of the inverter and the **port** (default `502`).
+5. Click **Submit**. The sensors appear right away.
 
 **Afterwards:**
 - **Configure** (on the integration card): turn **Extended battery statistics** on or off (BMS summary, all cell voltages and cell temperatures). Off by default. When turned off, these sensors are no longer provided and existing ones become unavailable; you can remove them from the entity list.
-- **⋮ → Reconfigure**: change the IP address or port, e.g. when the inverter got a new IP. Entities and history are kept.
+- **⋮ → Reconfigure**: change the IP address or port, e.g. when the inverter got a new IP. The connection is tested first; entities and history are kept.
 
-> **⚠️ Important Notice regarding Modbus TCP:** > Modbus TCP usually allows only **one active connection at a time**. If you have an old YAML Modbus configuration in your `configuration.yaml` or another script reading from the inverter, you MUST disable/remove it and restart Home Assistant before adding this integration. Otherwise, the connection will be refused.
+> **⚠️ Modbus TCP allows only one connection.** The dongle usually accepts **one active Modbus connection at a time**. If an old YAML Modbus configuration or another script also reads from the inverter, remove it and restart Home Assistant before adding this integration. Otherwise the connection is refused.
 
 ---
 
-## 🔮 Roadmap
-- [x] Read Inverter Holding Registers (Power, Voltage, Energy)
-- [x] Read BMS Registers (Cell voltages, Temperatures, SOH)
-- [x] Add `number` and `select` platforms to enable writing to the inverter (EMS mode, SOC limits, Charge/Discharge power).
-- [ ] Add support for scheduling via Time of Use registers.
+## ✅ Tested systems
 
-## 🤝 Contributing & Help Welcome!
-This is an open-source community project, and **help is always welcome!** Whether you want to add more Modbus registers, improve the code, fix a bug, or translate the integration into more languages: feel free to fork the repository and open a Pull Request.
+| Model | PCS firmware | BMS / HMI |
+|-------|--------------|-----------|
+| FH3X5KHY1PEU | V1.0.0.43 | V0.34 / V0.1 |
+| FH3X10KHY3PEU | V1.0.0.26 | V0.34 / V0.1 |
 
-## 🐛 Troubleshooting & Support
-If the integration fails to connect, check your Home Assistant logs (`home-assistant.log`). 
+Developed and tested on Home Assistant 2026.11. Other models and firmware versions are likely to work; some optional blocks (such as 30600) are only answered by newer firmware and are then switched off automatically.
+
+The register map used is in [docs/ModBus-Protocol-Pylon-FH3X-V1.2_20250811.md](docs/ModBus-Protocol-Pylon-FH3X-V1.2_20250811.md).
+
+---
+
+## 🐛 Troubleshooting
+
+Logs are under **Settings > System > Logs**. For more detail, open the integration and choose **Enable debug logging**.
+
 Common issues:
-- `Connection refused`: Another device or script is already connected to the inverter's Modbus port.
-- `Timeout`: Poor WiFi signal to the inverter dongle.
-- Inverter got a new IP address (e.g. after a router or firewall change, or the dongle switched between LAN and Wi-Fi): use **⋮ → Reconfigure** on the integration card. Entities and history are kept.
-- `Another H3X answers` under **Settings → System → Repairs**: the integration remembers the serial number of your H3X and found a different one at the configured address. Nothing is read or written until you decide. If your H3X was replaced (e.g. under warranty), open the repair and select **Submit**: the integration continues with the new unit and all entities, history and automations are kept. If it was not replaced, another device took over the address: use **⋮ → Reconfigure** to enter the address of your own H3X.
+- **`Connection refused` / `Unable to connect to H3X`:** another device or script is already connected to the inverter's Modbus port, or the dongle is offline. The integration keeps trying and resumes by itself.
+- **Timeouts:** poor Wi-Fi signal to the inverter dongle. A LAN connection is more reliable.
+- **Inverter got a new IP address** (e.g. after a router or firewall change, or the dongle switched between LAN and Wi-Fi): use **⋮ → Reconfigure** on the integration card. Entities and history are kept.
+- **`Another H3X answers` under Settings → System → Repairs:** the integration found a different serial number at the configured address. Nothing is read or written until this is cleared up. If your H3X was replaced (e.g. under warranty), open the repair and select **Submit**: the integration continues with the new unit and all entities, history and automations are kept. If it was not replaced, another device took over the address: use **⋮ → Reconfigure** to enter the address of your own H3X.
+- **A write shows an error (`The H3X did not confirm …`):** the inverter did not accept or confirm the value. Check that the EMS mode allows it (see *Important: Charge & Discharge Control* above) and try again.
+- **`Referenced entities ... are missing or not currently available` right after a restart:** an automation tried to write before the integration had finished starting. Harmless; the next run works.
 
-Feel free to open an issue on this repository if you encounter any bugs!
+Feel free to open an issue on this repository if you run into a bug.
 
 ---
-*Disclaimer: This is a community-built integration and is not officially affiliated with or endorsed by Pylontech.*
 
-## Language / Taal
+## 🤝 Contributing & credits
 
-The integration's dialogs (setup, Configure and Reconfigure) support **English** and **Dutch** using
-Home Assistant's built-in translations. Its dialogs follow the **language of your
-Home Assistant user profile** (and Home Assistant's fallback), without a separate
-language selector.
+Pull requests are welcome: more registers, fixes, improvements or translations.
 
-Sensor and control names, EMS mode choices, and inverter/battery state values are
-intentionally left unchanged in English. No entity IDs, unique IDs, Modbus
-registers or runtime logic are modified.
+- Original integration by [wietse108](https://github.com/wietse108/HA-pylontech-force-H3X).
+- Fault and warning bit names, and a useful cross-check of the register map, come from the official [Pylontech Research integration](https://github.com/Pylontech-Research/HA-pylontech-force-H3X) (MIT).
 
-**Nederlands:** De vensters (instellen, Configure en Reconfigure) volgen de taal van je Home
-Assistant-gebruikersprofiel. Sensornamen, bediening en statuswaarden blijven
-Engels, zodat bestaande automatiseringen blijven werken.
+Licensed under the GNU GPL v3, see [LICENSE](LICENSE).
+
+*Disclaimer: this is a community-built integration and is not officially affiliated with or endorsed by Pylontech.*
+
+---
+
+## 🌐 Language / Taal
+
+The integration's dialogs (setup, Configure, Reconfigure) and its Repair issue support **English** and **Dutch** using Home Assistant's built-in translations. They follow the **language of your Home Assistant user profile**, without a separate language selector.
+
+Sensor and control names, EMS mode choices, and inverter/battery state values are intentionally kept in English, so entity IDs and existing automations stay the same.
+
+**Nederlands:** De vensters (instellen, Configure en Reconfigure) en de Repair-melding volgen de taal van je Home Assistant-gebruikersprofiel. Sensornamen, bediening en statuswaarden blijven Engels, zodat bestaande automatiseringen blijven werken.
