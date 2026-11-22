@@ -255,6 +255,9 @@ class TelemetryValidator:
                 if power <= INVERTER_POWER_LIMIT:
                     if ac_total < 0:
                         power = -power
+                    # Whole watts, like the grid power registers; avoids float
+                    # noise such as 520.439999999999 in the state.
+                    power = round(power)
                     data[f"ac_power_{phase}"] = power
                     grid_power = f"grid_power_{phase}"
                     if grid_power in data:

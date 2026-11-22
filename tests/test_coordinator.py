@@ -269,6 +269,15 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(data["ac_power_r"], -3450)
         self.assertAlmostEqual(data["load_power_r"], 501)
 
+    async def test_phase_power_is_rounded_to_whole_watts(self):
+        # 229.7 V x 4.6 A = 1056.62 (float: 1056.6200000000001)
+        self.blocks[30100][31:33] = [2297, 46]
+        put_int(self.blocks[30183], 3, -536)
+        data = await self.poll()
+        self.assertEqual(data["ac_power_r"], 1057)
+        self.assertIsInstance(data["load_power_r"], int)
+        self.assertEqual(data["load_power_r"], 521)
+
     async def test_phase_load_adds_inverter_power_when_delivering(self):
         put_int(self.blocks[30100], 0, 3458)
         self.blocks[30100][31:33] = [2300, 150]
