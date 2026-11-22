@@ -258,6 +258,32 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["pv2_power"], 1200)
         self.assertEqual(data["load_power_t"], 989)
 
+    async def test_phase_load_subtracts_inverter_power_when_charging_from_grid(self):
+        # Seen live on 22 Nov 2026: H3X charging from the grid, AC total
+        # -3458 W, grid L1 +3951 W. Load L1 was shown as 7.4 kW instead of
+        # ~0.5 kW, because the unsigned AC current lost the direction.
+        put_int(self.blocks[30100], 0, -3458)
+        self.blocks[30100][31:33] = [2300, 150]   # 230.0 V, 15.0 A on R
+        put_int(self.blocks[30183], 3, 3951)
+        data = await self.poll()
+        self.assertAlmostEqual(data["ac_power_r"], -3450)
+        self.assertAlmostEqual(data["load_power_r"], 501)
+
+    async def test_phase_load_adds_inverter_power_when_delivering(self):
+        put_int(self.blocks[30100], 0, 3458)
+        self.blocks[30100][31:33] = [2300, 150]
+        put_int(self.blocks[30183], 3, -1000)
+        data = await self.poll()
+        self.assertAlmostEqual(data["ac_power_r"], 3450)
+        self.assertAlmostEqual(data["load_power_r"], 2450)
+
+    async def test_phase_load_not_derived_without_valid_ac_total(self):
+        put_int(self.blocks[30100], 0, 700_000_000)   # outside sanity range
+        data = await self.poll()
+        self.assertIsNone(data.get("ac_total_power"))
+        for key in ("ac_power_r", "load_power_r", "load_power_s", "load_power_t"):
+            self.assertIsNone(data.get(key), key)
+
     async def test_valid_charging_export_negative_temperatures_and_abrupt_changes(self):
         await self.poll()
         put_int(self.blocks[30156], 6, -15000)

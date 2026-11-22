@@ -240,11 +240,21 @@ class TelemetryValidator:
                 power = data[voltage] * data[current]
                 if power <= PV_POWER_LIMIT:
                     data[f"pv{n}_power"] = power
+        # ac_current_* is unsigned (U16), so voltage x current gives the size of
+        # the inverter's phase power but not its direction. Take the direction
+        # from the signed AC total: negative means the H3X takes power from the
+        # AC side (e.g. charging the battery from the grid). Without that sign
+        # the phase power was added instead of subtracted, and load per phase
+        # showed grid + inverter (e.g. 7.7 kW instead of 0.5 kW). Without a valid
+        # total the direction is unknown, so the phase values are not derived.
+        ac_total = data.get("ac_total_power")
         for phase in "rst":
             voltage, current = f"grid_voltage_{phase}", f"ac_current_{phase}"
-            if voltage in data and current in data:
+            if ac_total is not None and voltage in data and current in data:
                 power = data[voltage] * data[current]
                 if power <= INVERTER_POWER_LIMIT:
+                    if ac_total < 0:
+                        power = -power
                     data[f"ac_power_{phase}"] = power
                     grid_power = f"grid_power_{phase}"
                     if grid_power in data:
